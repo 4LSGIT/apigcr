@@ -43,7 +43,9 @@ jest.mock('../services/casey/chats', () => {
     async getChat(db, id, userId) { const c = mockStore.chats.get(Number(id)); return c && c.user_id === userId ? { ...c } : null; },
     async listChats(db, userId) { return [...mockStore.chats.values()].filter((c) => c.user_id === userId); },
     async deleteChat(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId) return false; mockStore.chats.delete(Number(id)); mockStore.messages.delete(Number(id)); return true; },
-    async claimTurn(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId || mockStore.claimFails || c.running_since) return false; c.running_since = new Date(); return true; },
+    async claimTurn(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId || mockStore.claimFails || c.running_since) return false; c.running_since = new Date(); c.stop_requested_at = null; return true; },
+    async requestStop(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId || !c.running_since || c.stop_requested_at) return false; c.stop_requested_at = new Date(); return true; },
+    async stopRequested(db, id) { const c = mockStore.chats.get(Number(id)); mockStore.stopChecks = (mockStore.stopChecks || 0) + 1; return !!(c && c.stop_requested_at); },
     async releaseTurn(db, id, { promptVersion, thinkingFloorSeq } = {}) { const c = mockStore.chats.get(Number(id)); mockStore.released.push([Number(id), promptVersion, thinkingFloorSeq]); if (c) { c.running_since = null; if (promptVersion) { c.prompt_version = promptVersion; c.thinking_floor_seq = Math.max(c.thinking_floor_seq, Number(thinkingFloorSeq) || 0); } } },
     // The real store strips below the floor on load (tests/caseyChats.mysql.test.js proves it); mirrored here so the loop's floor logic is observable.
     async loadMessages(db, chatId, { thinkingFloorSeq = 0 } = {}) { return clone(mockStore.messages.get(Number(chatId)) || []).map((m) => (m.role === 'assistant' && m.seq < thinkingFloorSeq ? { ...m, content: actual.stripThinkingBlocks(m.content) } : m)); },
@@ -119,7 +121,7 @@ const reply = (content, stop = 'end_turn', extra = {}) => ({
 function model(script) {
   const requests = [];
   const fn = jest.fn(async (dbArg, opts) => {
-    requests.push(JSON.parse(JSON.stringify({ messages: opts.messages, system: opts.system, tools: opts.tools, model: opts.model, effort: opts.effort, max_tokens: opts.max_tokens, consumerRef: opts.consumerRef, promptKey: opts.promptKey, promptVersion: opts.promptVersion, logContent: opts.logContent })));
+    requests.push(JSON.parse(JSON.stringify({ messages: opts.messages, system: opts.system, tools: opts.tools, model: opts.model, effort: opts.effort, max_tokens: opts.max_tokens, consumerRef: opts.consumerRef, promptKey: opts.promptKey, promptVersion: opts.promptVersion, logContent: opts.logContent, thinkingDisplay: opts.thinkingDisplay, timeout_ms: opts.timeout_ms })));
     const next = script.shift();
     if (!next) throw new Error('script exhausted');
     const out = typeof next === 'function' ? await next(opts) : next;
@@ -156,7 +158,7 @@ describe('a turn with tools', () => {
     for (const r of reqs) {
       expect(r.system).toBe(prompt.systemText());
       expect(r.tools).toEqual(tools.definitions());
-      expect(r).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low', max_tokens: 16000, consumerRef: 'assistant_v2:u6:c1', promptKey: 'casey_v2_turn', promptVersion: sig(), logContent: false });
+      expect(r).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low', max_tokens: 16000, consumerRef: 'assistant_v2:u6:c1', promptKey: 'casey_v2_turn', promptVersion: sig(), logContent: false, thinkingDisplay: 'summarized' });
     }
     // The first user message: the context block, then the text (trimmed).
     const u0 = reqs[0].messages[0];
@@ -484,6 +486,40 @@ describe('failures and refusals before / during the stream', () => {
     expect(mockStore.chats.get(1)).toMatchObject({ prompt_version: sig(), thinking_floor_seq: 3 });
   });
 
+  test('Stop: a stop requested during a round ends the turn before the next model call with a text-only [Stopped] row; the claim clears a stale stop', async () => {
+    const converse = model([(o) => { mockStore.chats.get(1).stop_requested_at = new Date(); return reply([TU('t1', 'whoami', {})], 'tool_use'); }, reply([T('never sent')])]);
+    const { events, res, types } = await turn({ converse });
+    expect(res.ok).toBe(true);
+    expect(converse.requests).toHaveLength(1);                           // the round ran, the next call did not
+    expect(types).toEqual(['chat', 'tool_call', 'tool_result', 'final']);
+    expect(stored(1).map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(stored(1)[3]).toEqual({ role: 'assistant', content: [T(loop.STOPPED_NOTE)] });
+    expect(mockStore.messages.get(1)[3].meta.altered).toBe('stopped');
+    expect(events[3].body).toMatchObject({ stopped: true, limited: false, text: loop.STOPPED_NOTE, calls: 1 });
+    // The next turn's claim clears the stale request, so it runs.
+    const c2 = model([reply([T('Two.')])]);
+    const t2 = await turn({ converse: c2, chatId: 1, text: 'again' });
+    expect(t2.res.ok).toBe(true);
+    expect(t2.events[t2.events.length - 1].body).toMatchObject({ stopped: false, text: 'Two.' });
+    expect(mockStore.chats.get(1).stop_requested_at).toBeNull();
+    // A normal final says stopped:false; the page's Keep-going text is exported for the boot route.
+    expect(typeof loop.CONTINUE_TEXT).toBe('string');
+    expect(loop.CONTINUE_TEXT.length).toBeGreaterThan(20);
+  });
+
+  test('the page context rides in the user message\'s context block (never the system prompt) and in the row meta', async () => {
+    const converse = model([reply([T('ok')])]);
+    const { res } = await turn({ converse, context: { label: 'Cases', case_id: 'C1', nope: 'x' } });
+    expect(res.ok).toBe(true);
+    const u0 = converse.requests[0].messages[0];
+    expect(u0.content[0].text.split('\n').pop()).toBe('Page: Cases; case C1');
+    expect(converse.requests[0].system).toBe(prompt.systemText());
+    expect(mockStore.messages.get(1)[0].meta.context.page).toEqual({ label: 'Cases', case_id: 'C1' });
+    const c2 = model([reply([T('ok')])]);
+    await turn({ converse: c2, context: 'garbage' });
+    expect(c2.requests[0].messages[0].content[0].text).toMatch(/\nPage: \(none\)$/);
+  });
+
   test('a chat created by the turn whose first store throws is removed (no empty chat lingers)', async () => {
     const realAppend = chats.appendMessage;
     chats.appendMessage = jest.fn(async () => { throw new Error('db down'); });
@@ -571,15 +607,25 @@ describe('settings and context', () => {
     mockSettings.model = 'claude-fable-5-1'; mockSettings.effort = 'high';
     expect([loop.settingModel(), loop.settingEffort()]).toEqual(['claude-fable-5-1', 'high']);
     mockSettings.model = 'claude-opus-4-1'; mockSettings.effort = 'max';
-    expect([loop.settingModel(), loop.settingEffort()]).toEqual(['claude-opus-5-5', 'medium']);
+    expect([loop.settingModel(), loop.settingEffort()]).toEqual(['claude-sonnet-5-5', 'medium']);
     mockSettings.model = null; mockSettings.effort = '';
-    expect([loop.settingModel(), loop.settingEffort()]).toEqual(['claude-opus-5-5', 'medium']);
+    expect([loop.settingModel(), loop.settingEffort()]).toEqual(['claude-sonnet-5-5', 'medium']);
+    expect(loop.DEFAULT_MODEL).toBe('claude-sonnet-5-5');   // the S2 checkpoint's pick (2026-11-22)
   });
 
   test('contextBlock: firm-local time, UTC, identity, elevation; a machine key is named as one', () => {
     const now = new Date('2026-07-04T16:05:00Z');
     const a = loop.contextBlock({ auth: { type: 'jwt', userId: 7, username: 'rena', roles: ['staff', 'intake'] }, headers: {}, now });
-    expect(a.text).toBe('[context — refreshed each turn]\nNow: Saturday 2026-07-04 12:05 EDT (America/Detroit); UTC 2026-07-04T16:05:00Z\nActing as: rena (user_id 7); roles: staff, intake; superuser: no; elevation live: no\nPage: (none — no page context in this version)');
+    expect(a.text).toBe('[context — refreshed each turn]\nNow: Saturday 2026-07-04 12:05 EDT (America/Detroit); UTC 2026-07-04T16:05:00Z\nActing as: rena (user_id 7); roles: staff, intake; superuser: no; elevation live: no\nPage: (none)');
+    // The page's context → the Page line, bounded and sanitised; meta carries it.
+    const p = loop.contextBlock({ auth: SU, headers: {}, now, context: { label: 'Case 123 — Jones', case_id: 'ABC', contact_id: 44, path: 'x', junk: 'dropped' } });
+    expect(p.text.split('\n').pop()).toBe('Page: Case 123 — Jones; case ABC; contact 44');   // only the three known keys; `path` is not one
+    expect(loop.pageLine(null)).toBe('Page: (none)');
+    expect(loop.pageLine({ label: 'a\nb\tc' })).toBe('Page: a b c');
+    expect(loop.sanitizeContext({ label: 'L', case_id: 7, nope: 1 })).toEqual({ label: 'L', case_id: '7' });
+    expect(loop.sanitizeContext({ label: 'x'.repeat(500) }).label.length).toBe(loop.CONTEXT_MAX);
+    expect(loop.sanitizeContext('str')).toBeNull();
+    expect(loop.sanitizeContext({ junk: 1 })).toBeNull();
     expect(a.meta).toEqual({ now: '2026-07-04T16:05:00.000Z', zone: 'America/Detroit', user_id: 7, username: 'rena', roles: ['staff', 'intake'], superuser: false, elevated: false });
     const b = loop.contextBlock({ auth: SU, headers: { 'x-su-elevation': mintElevationToken(6) }, now });
     expect(b.text).toContain('superuser: yes; elevation live: yes');

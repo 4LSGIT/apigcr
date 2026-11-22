@@ -6,6 +6,13 @@
 // S2: the loop (services/casey/loop.js) — POST /api/casey/turn streams one
 //     user turn as NDJSON; the chat routes read and delete a user's own
 //     transcripts. SU only in S2 (design §6), dark while casey_v2_enabled = '0'.
+// S3a: the page (public/casey.html). The turn and chat routes open to every
+//     signed-in STAFF user (a JWT; a machine key is refused — the loop acts as
+//     a person) while casey_v2_enabled is on: Fred's ruling 2026-11-22, no
+//     pilot list — "just turn over". The flag is the switch: '0' darkens
+//     them all and the shell loads the v1 pane instead. GET /api/casey/boot
+//     tells the shell and the page which Casey is on; POST /api/casey/turn/stop
+//     marks a running turn to end. The tools / catalog routes stay SU-only.
 //
 //   GET /api/casey/catalog?family=&class=&tier=&method=&q=&unknown=1
 //     → { status:'success', summary, filters, rows:[...], unknown:[...] }
@@ -62,10 +69,42 @@ const { superuserOnlyFor } = require('../lib/auth.superuser');
 const catalog = require('../lib/routeCatalog');
 
 const guard = superuserOnlyFor('casey');
+const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 
 function v2Enabled() {
   return require('../lib/firmConfig').cfg('casey_v2_enabled') !== '0'; // lazy require (convention)
 }
+
+// S3a: a signed-in staff PERSON (v1's staffOnly, same words) — the loop runs
+// every tool as the caller, and a machine key is not someone to act as.
+function staffOnly(req, res, next) {
+  if (req.auth && req.auth.type === 'jwt' && req.auth.userId != null) return next();
+  return res.status(403).json({ status: 'error', message: 'Casey requires a signed-in staff user.' });
+}
+// A View-as session (lib/auth.impersonation: the JWT carries viewAs /
+// impersonator) is refused on every v2 route, reads included: a transcript is
+// private to its user, superusers included (design §9 S2), and a View-as
+// read would be another person reading it. v1's pane allows the read; v2
+// does not (S3a review; Fred may relax it — it is one line).
+function notViewAs(res, auth) {
+  if (!(auth && (auth.viewAs || auth.impersonator))) return false;
+  res.status(403).json({ status: 'error', message: 'Casey is not available in a View-as session.' });
+  return true;
+}
+// One user's turns per hour (v1's execute limit; keyed u<userId>, in-process
+// like every makeLimiter): the firm's monthly cap is shared with v1, so one
+// runaway client must not be able to spend it. Checked in the handler, not as
+// a gate name.
+const turnLimited = require('../lib/rateLimiter').makeLimiter(60 * 60 * 1000, 60);
+// The flag is checked INSIDE each handler (dark()), not as a middleware: a
+// route-local gate is a NAME lib/routeCatalog.js must know, and a flag check
+// is not an auth claim.
+function dark(res) {
+  if (v2Enabled()) return false;
+  res.status(403).json({ status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' });
+  return true;
+}
+const staff = [jwtOrApiKey, staffOnly];
 
 router.get('/api/casey/catalog', ...guard, (req, res) => {
   try {
@@ -142,9 +181,21 @@ function chatIdParam(v) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-router.post('/api/casey/turn', ...guard, async (req, res) => {
-  if (!v2Enabled()) {
-    return res.status(403).json({ status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' });
+// What the shell and the page need to know: which Casey is on, and the loop's limits.
+router.get('/api/casey/boot', ...staff, (req, res) => {
+  if (notViewAs(res, req.auth)) return;
+  const loop = require('../services/casey/loop');   // lazy require (convention)
+  res.json({
+    status: 'success', enabled: v2Enabled(), model: loop.settingModel(), effort: loop.settingEffort(),
+    limits: { text_max: loop.TEXT_MAX, max_tool_calls: loop.MAX_TOOL_CALLS, max_turn_ms: loop.MAX_TURN_MS },
+    continue_text: loop.CONTINUE_TEXT,
+  });
+});
+
+router.post('/api/casey/turn', ...staff, async (req, res) => {
+  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (turnLimited(`u${req.auth.userId}`)) {
+    return res.status(429).json({ status: 'error', message: 'You have asked Casey a lot of questions this hour. Try again later.' });
   }
   const loop = require('../services/casey/loop');   // lazy require (convention)
   const tools = require('../services/casey/tools');  // lazy require (convention)
@@ -155,6 +206,9 @@ router.post('/api/casey/turn', ...guard, async (req, res) => {
     if (chatId === null) return res.status(400).json({ status: 'error', message: 'chat_id must be a positive integer' });
   }
   if (typeof body.text !== 'string') return res.status(400).json({ status: 'error', message: 'text is required' });
+  if (body.context !== undefined && body.context !== null && (typeof body.context !== 'object' || Array.isArray(body.context))) {
+    return res.status(400).json({ status: 'error', message: 'context must be an object' });
+  }
   let streaming = false;
   const send = (event) => {
     if (res.writableEnded || res.destroyed) return;
@@ -165,6 +219,7 @@ router.post('/api/casey/turn', ...guard, async (req, res) => {
       ctx: tools.ctxFromRequest(req, 'casey'),
       chatId,
       text: body.text,
+      context: body.context || null,
       send,
       begin() {
         streaming = true;
@@ -184,7 +239,25 @@ router.post('/api/casey/turn', ...guard, async (req, res) => {
   if (!res.writableEnded) res.end();
 });
 
-router.get('/api/casey/chats', ...guard, async (req, res) => {
+// The page's Stop: marks the running turn; the loop ends it before its next model call.
+router.post('/api/casey/turn/stop', ...staff, async (req, res) => {
+  if (dark(res) || notViewAs(res, req.auth)) return;
+  try {
+    const chats = require('../services/casey/chats'); // lazy require (convention)
+    const id = chatIdParam(req.body && req.body.chat_id);
+    if (id === null) return res.status(400).json({ status: 'error', message: 'chat_id must be a positive integer' });
+    const chat = await chats.getChat(req.db, id, req.auth.userId);
+    if (!chat) return res.status(404).json({ status: 'error', message: 'No such chat' });
+    const marked = await chats.requestStop(req.db, id, req.auth.userId);
+    res.json({ status: 'success', stopping: marked, running: !!chat.running_since });
+  } catch (err) {
+    console.error('[api.casey] stop error:', err);
+    res.status(500).json({ status: 'error', message: 'Stop failed' });
+  }
+});
+
+router.get('/api/casey/chats', ...staff, async (req, res) => {
+  if (dark(res) || notViewAs(res, req.auth)) return;
   try {
     const chats = require('../services/casey/chats'); // lazy require (convention)
     const rows = await chats.listChats(req.db, req.auth.userId, req.query && req.query.limit);
@@ -195,7 +268,8 @@ router.get('/api/casey/chats', ...guard, async (req, res) => {
   }
 });
 
-router.get('/api/casey/chats/:id', ...guard, async (req, res) => {
+router.get('/api/casey/chats/:id', ...staff, async (req, res) => {
+  if (dark(res) || notViewAs(res, req.auth)) return;
   try {
     const chats = require('../services/casey/chats'); // lazy require (convention)
     const id = chatIdParam(req.params.id);
@@ -209,7 +283,8 @@ router.get('/api/casey/chats/:id', ...guard, async (req, res) => {
   }
 });
 
-router.delete('/api/casey/chats/:id', ...guard, async (req, res) => {
+router.delete('/api/casey/chats/:id', ...staff, async (req, res) => {
+  if (dark(res) || notViewAs(res, req.auth)) return;
   try {
     const chats = require('../services/casey/chats'); // lazy require (convention)
     const id = chatIdParam(req.params.id);

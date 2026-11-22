@@ -70,7 +70,7 @@ const FIRM_TZ = process.env.FIRM_TIMEZONE || 'America/Detroit';
 // The model menu (lib/settingsRegistry.js casey_v2_model's options — the same
 // list, pinned by tests/caseyLoop.test.js) and the effort menu.
 const MODELS = Object.freeze(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1']);
-const DEFAULT_MODEL = 'claude-opus-5-5';
+const DEFAULT_MODEL = 'claude-sonnet-5-5';   // S3a (checkpoint 2026-11-22): equal correctness at ~45 % of Opus's cost; Opus and Fable stay on the menu
 const EFFORTS = Object.freeze(['low', 'medium', 'high']);
 const DEFAULT_EFFORT = 'medium';
 
@@ -90,6 +90,10 @@ const DECLINED_NOTE = '[Casey declined to continue this request.]';
 const EMPTY_NOTE = '[Casey returned no answer.]';
 const INTERRUPTED_RESULT = JSON.stringify({ ok: false, error: { code: 'INTERRUPTED', message: 'this tool call was interrupted before a result was recorded (the previous turn did not finish); call it again if you still need it' } });
 const BUDGET_STOP_NOTE = '[Casey ran out of tool budget for this turn before answering. Ask it to continue.]';
+const STOPPED_NOTE = '[Stopped by the user.]';
+// What the page sends as the user's text for "Keep going" on a limited turn.
+const CONTINUE_TEXT = 'Keep going from where you stopped: finish the lookups you had planned and answer.';
+const CONTEXT_MAX = 300;   // the page's own words about where the user is, cut
 
 function settingModel() {
   const v = require('../../lib/firmConfig').cfg('casey_v2_model'); // lazy require (convention)
@@ -100,8 +104,21 @@ function settingEffort() {
   return EFFORTS.includes(v) ? v : DEFAULT_EFFORT;
 }
 
+/** The shell's description of where the user is (one line), or the placeholder. Plain text, cut. */
+function pageLine(context) {
+  if (!context || typeof context !== 'object') return 'Page: (none)';
+  const parts = [];
+  for (const [k, label] of [['label', ''], ['case_id', 'case '], ['contact_id', 'contact ']]) {
+    const v = context[k];
+    if (v == null || v === '') continue;
+    parts.push(label + String(v).replace(/[\r\n\t]+/g, ' ').trim());
+  }
+  if (!parts.length) return 'Page: (none)';
+  return `Page: ${parts.join('; ').slice(0, CONTEXT_MAX)}`;
+}
+
 /** The volatile first block of a user message, and the facts it was built from. */
-function contextBlock({ auth, headers, now }) {
+function contextBlock({ auth, headers, now, context }) {
   const utc = DateTime.fromJSDate(now, { zone: 'utc' });
   const local = utc.setZone(FIRM_TZ);
   const roles = Array.isArray(auth.roles) ? auth.roles : [];
@@ -112,14 +129,26 @@ function contextBlock({ auth, headers, now }) {
     '[context — refreshed each turn]',
     `Now: ${local.toFormat('cccc yyyy-LL-dd HH:mm ZZZZ')} (${FIRM_TZ}); UTC ${utc.toISO({ suppressMilliseconds: true })}`,
     `Acting as: ${who}; roles: ${roles.join(', ') || 'none'}; superuser: ${su ? 'yes' : 'no'}; elevation live: ${elevated ? 'yes' : 'no'}`,
-    'Page: (none — no page context in this version)',
+    pageLine(context),
   ].join('\n');
-  return { text, meta: { now: utc.toISO(), zone: FIRM_TZ, user_id: auth.userId ?? null, username: auth.username ?? null, roles, superuser: su, elevated } };
+  return { text, meta: { now: utc.toISO(), zone: FIRM_TZ, user_id: auth.userId ?? null, username: auth.username ?? null, roles, superuser: su, elevated, ...(context ? { page: context } : {}) } };
 }
 
 /** The history without thinking / redacted_thinking blocks (an assistant row left empty becomes one text block). */
 function stripThinking(messages) {
   return messages.map((m) => (m.role !== 'assistant' || !Array.isArray(m.content) ? m : { role: 'assistant', content: chats.stripThinkingBlocks(m.content) }));
+}
+
+/** The page's context object, bounded: three known keys, strings cut to CONTEXT_MAX; anything else dropped. */
+function sanitizeContext(c) {
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return null;
+  const out = {};
+  for (const k of ['label', 'case_id', 'contact_id']) {
+    const v = c[k];
+    if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, CONTEXT_MAX);
+    else if (typeof v === 'number' && Number.isFinite(v)) out[k] = String(v);
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /** tool_use ids of the last stored message when it is an assistant row that never got its results (an interrupted round). */
@@ -139,6 +168,7 @@ const addUsage = (sum, u) => { for (const k of ['input_tokens', 'output_tokens',
  * @param {object} o.ctx        tools.ctxFromRequest(req, 'casey') — the caller's identity
  * @param {number|null} o.chatId  an existing chat of this user, or null for a new one
  * @param {string} o.text       the user's message
+ * @param {object} [o.context]  the page's words about where the user is ({label, case_id, contact_id, path}) → the context block's Page line
  * @param {Function} o.send     (event) → void, one NDJSON line
  * @param {Function} [o.begin]  called once, before the first event, when the turn is claimed
  * @param {Function} [o.converse]  aiService.converse (injected by tests)
@@ -147,7 +177,7 @@ const addUsage = (sum, u) => { for (const k of ['input_tokens', 'output_tokens',
  * @throws httpError (status 400 / 404 / 409 / 429) BEFORE begin() — the route answers JSON
  */
 async function runTurn(db, {
-  ctx, chatId = null, text, send, begin = () => {},
+  ctx, chatId = null, text, context = null, send, begin = () => {},
   converse = aiService.converse, heartbeatMs = HEARTBEAT_MS,
   maxCalls = MAX_TOOL_CALLS, maxMs = MAX_TURN_MS, maxTokens = MAX_TOKENS, maxTokensRetry = MAX_TOKENS_RETRY,
   now = () => new Date(),
@@ -208,7 +238,7 @@ async function runTurn(db, {
     const rows = await chats.loadMessages(db, chat.id, { thinkingFloorSeq: floorSeq });
     const history = rows.map((m) => ({ role: m.role, content: m.content }));
     const orphans = orphanToolUses(rows);
-    const cb = contextBlock({ auth, headers: ctx.headers, now: now() });
+    const cb = contextBlock({ auth, headers: ctx.headers, now: now(), context: sanitizeContext(context) });
     const userMessage = { role: 'user', content: [
       ...orphans.map((id) => ({ type: 'tool_result', tool_use_id: id, content: INTERRUPTED_RESULT, is_error: true })),   // repair: results first, then the turn
       { type: 'text', text: cb.text }, { type: 'text', text: userText }] };
@@ -222,11 +252,18 @@ async function runTurn(db, {
     let budgetSpent = false;
 
     for (;;) {
+      // A Stop from the page (POST /api/casey/turn/stop sets casey_chats.stop_requested_at;
+      // the claim cleared it at the start of this turn): end here, before another model
+      // call, with the history consistent — the last round's results are already stored.
+      if (await chats.stopRequested(db, chat.id)) {
+        const row = await store('assistant', [{ type: 'text', text: STOPPED_NOTE }], { altered: 'stopped' });
+        return finish(row, STOPPED_NOTE, { stopped: true });
+      }
       // Spend, then the model.
       try { await spend.assertSpendAllowed(db); } catch (e) { return await rollbackIfOpening(fail(e.status || 429, e.message)); }
       const r = await converse(db, {
         messages, system, tools: defs, model: chat.model, effort: chat.effort, max_tokens: maxTok,
-        consumerRef: spend.consumerRef(userId, chat.id), promptKey: PROMPT_KEY, promptVersion: sig,
+        consumerRef: spend.consumerRef(userId, chat.id), promptKey: PROMPT_KEY, promptVersion: sig, thinkingDisplay: 'summarized',
         timeout_ms: Math.max(CALL_TIMEOUT_FLOOR_MS, maxMs - (Date.now() - started) + 30000), logContent: false,   // the floor: the closing call after a budget note still gets a real deadline
         onEvent: (ev) => {
           if (ev.type === 'text') send({ type: 'delta', text: ev.text });
@@ -310,10 +347,10 @@ async function runTurn(db, {
     try { await chats.releaseTurn(db, chat.id, { promptVersion: (stripped && !floorRaised) ? null : sig, thinkingFloorSeq: floorSeq }); } catch (e) { console.error('[casey loop] release failed:', e.message); }
   }
 
-  function finish(row, answerText) {
+  function finish(row, answerText, extra = {}) {
     const body = {
       chat_id: chat.id, message_id: row.id, seq: row.seq, text: answerText, usage, cost_cents: Math.round(cost * 10000) / 10000,
-      calls, tool_calls: toolCalls, limited, ms: Date.now() - started, model: chat.model, effort: chat.effort, prompt_version: sig,
+      calls, tool_calls: toolCalls, limited, stopped: false, ms: Date.now() - started, model: chat.model, effort: chat.effort, prompt_version: sig, ...extra,
     };
     send({ type: 'final', body });
     return { ok: true, final: body };
@@ -334,7 +371,7 @@ async function runTurn(db, {
 }
 
 module.exports = {
-  runTurn, contextBlock, stripThinking, orphanToolUses, settingModel, settingEffort,
+  runTurn, contextBlock, pageLine, sanitizeContext, stripThinking, orphanToolUses, settingModel, settingEffort,
   MODELS, DEFAULT_MODEL, EFFORTS, DEFAULT_EFFORT, MAX_TOOL_CALLS, MAX_TURN_MS, MAX_TOKENS, MAX_TOKENS_RETRY, HEARTBEAT_MS, CALL_TIMEOUT_FLOOR_MS, TEXT_MAX, PROMPT_KEY,
-  BUDGET_NOTE, CUT_NOTE, DECLINED_NOTE, BUDGET_STOP_NOTE, EMPTY_NOTE, INTERRUPTED_RESULT, FIRM_TZ,
+  BUDGET_NOTE, CUT_NOTE, DECLINED_NOTE, BUDGET_STOP_NOTE, EMPTY_NOTE, STOPPED_NOTE, CONTINUE_TEXT, CONTEXT_MAX, INTERRUPTED_RESULT, FIRM_TZ,
 };

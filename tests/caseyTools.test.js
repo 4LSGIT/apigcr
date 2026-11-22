@@ -206,8 +206,9 @@ describe('lookup_routes', () => {
   });
   test('filters: q substring, family, method', async () => {
     const r = await tools.runTool('lookup_routes', ctx(STAFF), { q: 'casey', method: 'GET' });
-    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/catalog', '/api/casey/chats', '/api/casey/chats/:id', '/api/casey/tools']);
-    expect(r.data.rows[0]).toMatchObject({ auth: 'su', superuser_tool: 'casey', tier: 'T3', proposable: false, auto_get: false });
+    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/boot', '/api/casey/catalog', '/api/casey/chats', '/api/casey/chats/:id', '/api/casey/tools']);
+    expect(r.data.rows[0]).toMatchObject({ path: '/api/casey/boot', auth: 'staff', tier: 'T0', proposable: false, auto_get: false });   // S3a: a staff read, still never proposable or auto (/api/casey/*)
+    expect(r.data.rows[1]).toMatchObject({ path: '/api/casey/catalog', auth: 'su', superuser_tool: 'casey', tier: 'T3', proposable: false, auto_get: false });
     const f = await tools.runTool('lookup_routes', ctx(STAFF), { family: '/api/tasks' });
     expect(f.data.count).toBeGreaterThan(0);
     expect(f.data.rows.every(x => x.family === '/api/tasks')).toBe(true);

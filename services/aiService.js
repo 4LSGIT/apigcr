@@ -111,6 +111,7 @@ const DEFAULT_MAX_TOKENS      = 1024;         // inline calls that omit max_toke
 const CONVERSE_TIMEOUT_MS     = 300000;       // 5 min default (the loop's own turn ceiling)
 const CONVERSE_TIMEOUT_MAX_MS = 600000;       // clamp ceiling for converse opts.timeout_ms
 const CONVERSE_MAX_TOKENS     = 16000;        // thinking + answer per request, default
+const THINKING_DISPLAYS       = new Set(['summarized', 'omitted']);   // thinking.display values converse accepts ('updates' is a beta)
 
 // Attachment caps + allowed inline media types.
 const MAX_ATTACHMENTS          = 4;
@@ -1018,6 +1019,13 @@ function withLastBlockCached(messages) {
  * @param {Function} [opts.onEvent]   readMessageStream's block events, as they arrive
  * @param {boolean} [opts.logContent=true] false → the ai_calls row keeps no text
  *                                    (lengths only), as the comms and Ask Casey rows do
+ * @param {string} [opts.thinkingDisplay] 'summarized' | 'omitted' → thinking.display
+ *                                    (absent → the API default, omitted: thinking
+ *                                    blocks stream with an empty text). A per-ROUTE
+ *                                    constant, never varied per request: the thinking
+ *                                    config is rendered into the prompt, so a change
+ *                                    invalidates the messages cache (blocks still
+ *                                    replay unchanged — display is visibility only).
  * @returns {Promise<{ok:true, content:Array, stop_reason:string|null, usage:object,
  *   cost_cents:number|null, callId:number|null, latency_ms:number, partial:number[]}
  *   | {ok:false, error:'bad_request'|'no_auth'|'api_error'|'timeout', detail?:string,
@@ -1040,6 +1048,7 @@ async function converse(db, {
   timeout_ms,
   onEvent,
   logContent = true,
+  thinkingDisplay,
 } = {}) {
   const omit = (v) => `[omitted: ${String(v == null ? '' : (typeof v === 'string' ? v : JSON.stringify(v))).length} chars]`;
   const logText = (v) => (logContent ? v : omit(v));
@@ -1053,6 +1062,7 @@ async function converse(db, {
   else if (!Array.isArray(tools)) bad = 'tools must be an array';
   else if (!Number.isInteger(max_tokens) || max_tokens < 1) bad = 'max_tokens must be a positive integer';
   else if (system != null && typeof system !== 'string' && !Array.isArray(system)) bad = 'system must be a string or a block array';
+  else if (thinkingDisplay != null && !THINKING_DISPLAYS.has(thinkingDisplay)) bad = `thinkingDisplay must be one of ${[...THINKING_DISPLAYS].join(', ')}`;
   if (bad) {
     const callId = await logCall(db, { ...base, status: 'error', error: `bad_request: ${bad}` });
     return { ok: false, error: 'bad_request', detail: bad, callId };
@@ -1071,7 +1081,7 @@ async function converse(db, {
     body.tools = tools.map((t, i) => (i === tools.length - 1 ? { ...t, cache_control: { ...CACHE_CONTROL } } : t));
   }
   body.messages = withLastBlockCached(messages);
-  body.thinking = { type: 'adaptive' };
+  body.thinking = thinkingDisplay ? { type: 'adaptive', display: thinkingDisplay } : { type: 'adaptive' };
   body.output_config = { effort };
   body.stream = true;
 

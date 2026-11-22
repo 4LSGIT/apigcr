@@ -21,7 +21,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'casey-turn-route-secret';
 const flags = { v2: null };
 jest.mock('../lib/firmConfig', () => {
   const actual = jest.requireActual('../lib/firmConfig');
-  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flags.v2 : k === 'casey_v2_model' ? 'claude-opus-5-5' : k === 'casey_v2_effort' ? null : actual.cfg(k))) };
+  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flags.v2 : k === 'casey_v2_model' ? 'claude-opus-5-5' : k === 'casey_v2_effort' ? null : k === 'internal_api_key' ? 'yci_TESTINTERNALKEYFORCASEY00' : k === 'internal_api_key_prev' ? null : actual.cfg(k))) };   // secret-scan: allow (a test constant)
 });
 const mockStore = { chats: new Map(), messages: new Map(), nextChat: 1, nextMsg: 1 };
 jest.mock('../services/casey/chats', () => {
@@ -38,7 +38,9 @@ jest.mock('../services/casey/chats', () => {
     async getChat(db, id, userId) { const c = mockStore.chats.get(Number(id)); return c && c.user_id === userId ? { ...c } : null; },
     async listChats(db, userId) { return [...mockStore.chats.values()].filter((c) => c.user_id === userId).map((c) => ({ ...c, message_count: (mockStore.messages.get(c.id) || []).length })); },
     async deleteChat(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId) return false; mockStore.chats.delete(Number(id)); mockStore.messages.delete(Number(id)); return true; },
-    async claimTurn(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId || c.running_since) return false; c.running_since = new Date(); return true; },
+    async claimTurn(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId || c.running_since) return false; c.running_since = new Date(); c.stop_requested_at = null; return true; },
+    async requestStop(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId || !c.running_since || c.stop_requested_at) return false; c.stop_requested_at = new Date(); return true; },
+    async stopRequested(db, id) { const c = mockStore.chats.get(Number(id)); return !!(c && c.stop_requested_at); },
     async releaseTurn(db, id, { promptVersion, thinkingFloorSeq } = {}) { const c = mockStore.chats.get(Number(id)); if (c) { c.running_since = null; if (promptVersion) { c.prompt_version = promptVersion; c.thinking_floor_seq = Math.max(c.thinking_floor_seq, Number(thinkingFloorSeq) || 0); } } },
     async loadMessages(db, chatId) { return clone(mockStore.messages.get(Number(chatId)) || []); },
     async appendMessage(db, chatId, role, content, meta) {
@@ -135,20 +137,67 @@ function call(method, p, { token = su, elevate = true, body } = {}) {
 }
 const turn = (body, o) => call('POST', '/api/casey/turn', { body, ...o });
 
-test('the SU chain and the flag, before anything runs', async () => {
+test('S3a gate: any signed-in staff person, no elevation; a machine key and no token are refused; the flag darkens every route; boot stays answerable', async () => {
   expect((await turn({ text: 'hi' }, { token: null })).status).toBe(401);
-  expect((await turn({ text: 'hi' }, { token: staff })).status).toBe(403);
-  expect((await turn({ text: 'hi' }, { elevate: false })).status).toBe(401);
-  flags.v2 = '0';
-  const dark = await turn({ text: 'hi' });
-  expect(dark).toMatchObject({ status: 403, body: { status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' } });
-  for (const p of ['/api/casey/chats', '/api/casey/chats/1']) {
-    expect((await call('GET', p, { token: staff })).status).toBe(403);
-    expect((await call('GET', p, { token: null })).status).toBe(401);
+  // An API key is a staff identity for jwtOrApiKey but not a PERSON: staffOnly refuses it (the loop acts as someone).
+  // The internal key (firmConfig internal_api_key, mocked above) authenticates as {type:'api_key'} — then 403 by staffOnly, on every v2 route.
+  const asKey = (method, p, body) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: { 'content-type': 'application/json', 'x-api-key': 'yci_TESTINTERNALKEYFORCASEY00' } }, (res) => { let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => { try { resolve({ status: res.statusCode, body: JSON.parse(d) }); } catch (e) { resolve({ status: res.statusCode, body: d }); } }); });
+    req.on('error', reject); req.end(body === undefined ? undefined : JSON.stringify(body));
+  });
+  for (const [m, p, b] of [['POST', '/api/casey/turn', { text: 'hi' }], ['POST', '/api/casey/turn/stop', { chat_id: 1 }], ['GET', '/api/casey/chats'], ['GET', '/api/casey/chats/1'], ['DELETE', '/api/casey/chats/1'], ['GET', '/api/casey/boot']]) {
+    expect(await asKey(m, p, b)).toMatchObject({ status: 403, body: { status: 'error', message: 'Casey requires a signed-in staff user.' } });
   }
-  expect((await call('DELETE', '/api/casey/chats/1', { token: staff })).status).toBe(403);
+  flags.v2 = '0';
+  for (const [m, p, b] of [['POST', '/api/casey/turn', { text: 'hi' }], ['POST', '/api/casey/turn/stop', { chat_id: 1 }], ['GET', '/api/casey/chats'], ['GET', '/api/casey/chats/1'], ['DELETE', '/api/casey/chats/1']]) {
+    const r = await call(m, p, { token: staff, elevate: false, body: b });
+    expect(r).toMatchObject({ status: 403, body: { status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' } });
+  }
+  const boot = await call('GET', '/api/casey/boot', { token: staff, elevate: false });
+  expect(boot.status).toBe(200);
+  expect(boot.body).toMatchObject({ status: 'success', enabled: false, model: 'claude-opus-5-5', effort: 'medium', limits: { text_max: 4000, max_tool_calls: 40, max_turn_ms: 300000 } });
+  expect(typeof boot.body.continue_text).toBe('string');
+  flags.v2 = null;
+  expect((await call('GET', '/api/casey/boot', { token: staff, elevate: false })).body.enabled).toBe(true);
+  expect((await call('GET', '/api/casey/boot', { token: null })).status).toBe(401);
+  // The S1 tool routes stay SU-only.
+  expect((await call('GET', '/api/casey/tools', { token: staff, elevate: false })).status).toBe(403);
   expect(global.fetch).not.toHaveBeenCalled();
   expect(mockStore.chats.size).toBe(0);
+});
+
+test('S3a review: a View-as session is refused on every v2 route; the per-user turn limit answers 429 after 60 in an hour', async () => {
+  const viewAs = jwt.sign({ sub: 7, username: 'rena', user_auth: 'authorized', roles: ['admin'], aud: 'staff', view_as: true, act: { sub: 6, username: 'IT' } }, process.env.JWT_SECRET, { expiresIn: '5m' });
+  // Writes are refused one layer up (jwtOrApiKey: read-only View-as, code view_as_read_only); the READS reach the
+  // route and are refused there — that is the gap v1 left open (a View-as holder could read another user's transcripts).
+  for (const [m, p, b] of [['POST', '/api/casey/turn', { text: 'hi' }], ['POST', '/api/casey/turn/stop', { chat_id: 1 }], ['DELETE', '/api/casey/chats/1']]) {
+    const r = await call(m, p, { token: viewAs, elevate: false, body: b });
+    expect(r.status).toBe(403);
+    expect(r.body.code === 'view_as_read_only' || r.body.message === 'Casey is not available in a View-as session.').toBe(true);
+  }
+  for (const p of ['/api/casey/chats', '/api/casey/chats/1', '/api/casey/boot']) {
+    expect(await call('GET', p, { token: viewAs, elevate: false })).toMatchObject({ status: 403, body: { status: 'error', message: 'Casey is not available in a View-as session.' } });
+  }
+  // The limiter counts attempts per user and sits AFTER the flag and the view-as check, BEFORE the loop:
+  // 60 refused-by-the-loop attempts (an unknown chat → 404) use the hour, the 61st is 429, another user is not affected.
+  const other = jwt.sign({ sub: 9, username: 'other', user_auth: 'authorized', roles: ['staff'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
+  const statuses = [];
+  for (let i = 0; i < 61; i++) statuses.push((await turn({ text: 'hi', chat_id: 9999 }, { token: other, elevate: false })).status);
+  expect(statuses.slice(0, 60).every((s) => s === 404)).toBe(true);
+  expect(statuses[60]).toBe(429);
+  expect((await turn({ text: 'hi', chat_id: 9999 }, { token: staff, elevate: false })).status).toBe(404);
+  expect(global.fetch).not.toHaveBeenCalled();
+});
+
+test('Stop route: 400 / 404 / not running / running; scoped to the caller', async () => {
+  expect(await call('POST', '/api/casey/turn/stop', { token: staff, elevate: false, body: {} })).toMatchObject({ status: 400 });
+  expect(await call('POST', '/api/casey/turn/stop', { token: staff, elevate: false, body: { chat_id: 5 } })).toMatchObject({ status: 404 });
+  mockStore.chats.set(5, { id: 5, user_id: 7, title: 't', model: 'm', effort: 'e', prompt_version: 'v', thinking_floor_seq: 0, running_since: null, stop_requested_at: null }); mockStore.messages.set(5, []);
+  expect(await call('POST', '/api/casey/turn/stop', { token: staff, elevate: false, body: { chat_id: 5 } })).toMatchObject({ status: 200, body: { status: 'success', stopping: false, running: false } });
+  mockStore.chats.get(5).running_since = new Date();
+  expect(await call('POST', '/api/casey/turn/stop', { token: staff, elevate: false, body: { chat_id: 5 } })).toMatchObject({ status: 200, body: { stopping: true, running: true } });
+  expect(await call('POST', '/api/casey/turn/stop', { token: staff, elevate: false, body: { chat_id: 5 } })).toMatchObject({ status: 200, body: { stopping: false, running: true } });   // already marked
+  expect(await call('POST', '/api/casey/turn/stop', { token: su, elevate: false, body: { chat_id: 5 } })).toMatchObject({ status: 404 });   // not the SU's chat
 });
 
 test('plain JSON refusals before the stream: 400, 404, 409, 429', async () => {
@@ -169,6 +218,7 @@ test('plain JSON refusals before the stream: 400, 404, 409, 429', async () => {
   expect(capped.body.message).toMatch(/monthly AI spending limit/);
   expect(global.fetch).not.toHaveBeenCalled();
   expect(mockStore.chats.size).toBe(2);   // no chat created for a refused turn
+  expect(await turn({ text: 'hi', context: 'x' })).toMatchObject({ status: 400, body: { message: 'context must be an object' } });
 });
 
 test('a whole turn as NDJSON: headers, event order, tools run as the SU over loopback, the final; then the chat routes', async () => {
@@ -176,7 +226,7 @@ test('a whole turn as NDJSON: headers, event order, tools run as the SU over loo
     streamResponse(sse([{ type: 'thinking', thinking: 'look' }, { type: 'tool_use', id: 'tu1', name: 'whoami', input: {} }, { type: 'tool_use', id: 'tu2', name: 'api_get', input: { path: '/api/availability-blocks' } }], 'tool_use')),
     streamResponse(sse([{ type: 'text', text: 'You are IT; no blocks.' }], 'end_turn')),
   ];
-  const r = await turn({ text: 'Who am I and are there availability blocks?' });
+  const r = await turn({ text: 'Who am I and are there availability blocks?', context: { label: 'Cases tab' } }, { elevate: false });   // a plain staff JWT, no elevation (S3a)
   expect(r.status).toBe(200);
   expect(r.headers['content-type']).toBe('application/x-ndjson; charset=utf-8');
   expect(r.headers['cache-control']).toBe('no-store, no-transform');
@@ -195,8 +245,10 @@ test('a whole turn as NDJSON: headers, event order, tools run as the SU over loo
   expect(apiBodies).toHaveLength(2);
   expect(apiBodies[0]).toMatchObject({ model: 'claude-opus-5-5', output_config: { effort: 'medium' }, thinking: { type: 'adaptive' }, stream: true });
   expect(apiBodies[0].tools.map((t) => t.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs']);
+  expect(apiBodies[0].thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+  expect(apiBodies[0].messages[0].content[0].text).toMatch(/\nPage: Cases tab$/);
   const results = apiBodies[1].messages[2].content;
-  expect(JSON.parse(results[0].content).data).toMatchObject({ user_id: 6, username: 'IT', is_superuser: true, elevated: true });
+  expect(JSON.parse(results[0].content).data).toMatchObject({ user_id: 6, username: 'IT', is_superuser: true, elevated: false });
   expect(JSON.parse(results[1].content).data).toMatchObject({ route: '/api/availability-blocks', status: 200 });
   // The ai_calls rows: two, labelled, lengths only.
   expect(aiRows).toHaveLength(2);

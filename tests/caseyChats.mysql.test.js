@@ -19,6 +19,7 @@ const express = require('express');
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'casey-chats-twin-secret';
 
 const migrate = require('../scripts/caseyV2ChatsMigrate');
+const migrateS3a = require('../scripts/caseyV2S3aMigrate');
 const chats = require('../services/casey/chats');
 const loop = require('../services/casey/loop');
 const tools = require('../services/casey/tools');
@@ -38,7 +39,7 @@ suite('casey chats — real engine', () => {
     const url = new URL(URL_);
     if (!/_test$/.test(url.pathname) || !['127.0.0.1', 'localhost'].includes(url.hostname)) throw new Error('Own local *_test DB required');
     pool = mysql.createPool({ uri: URL_, connectionLimit: 4, timezone: 'Z', supportBigNumbers: true, bigNumberStrings: true, multipleStatements: false });
-    pool.on('connection', (c) => c.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`));
+    pool.on('connection', (c) => { c.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`); c.query('SET SESSION lock_wait_timeout = 10'); });
     conn = await mysql.createConnection({ uri: URL_, timezone: 'Z' });
     await q('DROP TABLE IF EXISTS casey_messages');
     await q('DROP TABLE IF EXISTS casey_chats');
@@ -68,6 +69,23 @@ suite('casey chats — real engine', () => {
     const st = await migrate.state(conn);
     expect(st.problems).toEqual([]);
     expect(st.tables.casey_messages.exists).toBe(true);
+    // S3a: the stop column — CHECK (to do) → --apply → re-run (in place); afterwards the S2 CHECK reads it as drift (superseded).
+    lines.length = 0;
+    const c3 = await migrateS3a.run(conn, { apply: false, say });
+    expect(c3).toMatchObject({ ok: true, applied: false, line: 'CHECK OK — GO. Next: node scripts/caseyV2S3aMigrate.js --apply' });
+    const a3 = await migrateS3a.run(conn, { apply: true, say });
+    expect(a3).toMatchObject({ ok: true, applied: true });
+    expect(lines).toContain('  ✓ added casey_chats.stop_requested_at');
+    expect((await migrateS3a.run(conn, { apply: true, say })).line).toMatch(/^ALREADY IN PLACE — casey_chats\.stop_requested_at verified/);
+    const [[col]] = await conn.query("SELECT COLUMN_TYPE t, IS_NULLABLE n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'casey_chats' AND COLUMN_NAME = 'stop_requested_at'");
+    expect(col).toEqual({ t: 'datetime', n: 'YES' });
+    expect((await migrate.run(conn, { apply: false, say })).ok).toBe(false);   // the S2 script's CHECK is superseded past S3a
+    await q('ALTER TABLE casey_chats MODIFY stop_requested_at varchar(8) NULL COMMENT ' + conn.escape(migrateS3a.fileComment()));   // same comment: only the TYPE differs
+    lines.length = 0;
+    expect((await migrateS3a.run(conn, { apply: true, say })).ok).toBe(false);  // a misshapen column is NO-GO, not re-added
+    expect(lines.some((l) => /stop_requested_at is varchar\(8\), expected datetime/.test(l))).toBe(true);
+    await q('ALTER TABLE casey_chats MODIFY stop_requested_at datetime NULL COMMENT ' + conn.escape(migrateS3a.fileComment()));
+    expect((await migrateS3a.run(conn, { apply: false, say })).ok).toBe(true);
   });
 
   test('createChat / getChat / listChats / deleteChat are scoped by user; title normalised and cut', async () => {
@@ -144,6 +162,20 @@ suite('casey chats — real engine', () => {
     expect(await chats.claimTurn(pool, id, 6)).toBe(true);
     await chats.releaseTurn(pool, id);
     expect((await chats.getChat(pool, id, 6))).toMatchObject({ prompt_version: 'v2.0-new', thinking_floor_seq: 4 });
+    // S3a stop: only a RUNNING turn of this user's chat can be marked, once; the next claim clears it.
+    expect(await chats.requestStop(pool, id, 6)).toBe(false);          // not running
+    expect(await chats.claimTurn(pool, id, 6)).toBe(true);
+    expect(await chats.requestStop(pool, id, 7)).toBe(false);          // another user
+    expect(await chats.stopRequested(pool, id)).toBe(false);
+    expect(await chats.requestStop(pool, id, 6)).toBe(true);
+    expect(await chats.requestStop(pool, id, 6)).toBe(false);          // already marked
+    expect(await chats.stopRequested(pool, id)).toBe(true);
+    expect((await chats.getChat(pool, id, 6)).stop_requested_at).toBeInstanceOf(Date);
+    await chats.releaseTurn(pool, id);
+    await q('UPDATE casey_chats SET running_since = NULL WHERE id = ?', [id]);
+    expect(await chats.claimTurn(pool, id, 6)).toBe(true);
+    expect(await chats.stopRequested(pool, id)).toBe(false);           // the claim cleared it
+    await chats.releaseTurn(pool, id);
     // The floor is only ever raised: GREATEST keeps 4 against 2, takes 7.
     await chats.releaseTurn(pool, id, { promptVersion: 'v2.0-new', thinkingFloorSeq: 2 });
     expect((await chats.getChat(pool, id, 6)).thinking_floor_seq).toBe(4);
@@ -178,6 +210,7 @@ suite('casey chats — real engine', () => {
     const app = express();
     app.use(express.json());
     const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
+    try {
     const spendDb = {
       query: async (sql, p) => {
         if (/FROM app_settings/i.test(sql)) return [[]];
@@ -200,7 +233,7 @@ suite('casey chats — real engine', () => {
     expect(r1.ok).toBe(true);
     const chatId = r1.final.chat_id;
     const sig = prompt.signature(tools.definitions());
-    expect(await chats.getChat(pool, chatId, 6)).toMatchObject({ model: 'claude-opus-5-5', effort: 'medium', prompt_version: sig, running_since: null, title: 'Who am I?' });
+    expect(await chats.getChat(pool, chatId, 6)).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'medium', prompt_version: sig, running_since: null, stop_requested_at: null, title: 'Who am I?' });
     const rows = await chats.loadMessages(pool, chatId);
     expect(rows).toHaveLength(4);
     expect(rows.slice(0, 3).map((m) => ({ role: m.role, content: m.content }))).toEqual(requests[1]);
@@ -215,6 +248,6 @@ suite('casey chats — real engine', () => {
     expect(sent.slice(0, 4)).toEqual(rows.map((m) => ({ role: m.role, content: m.content })));
     expect(sent[4].content[1]).toEqual(T('And again?'));
     expect((await chats.loadMessages(pool, chatId)).length).toBe(6);
-    await new Promise((r) => server.close(r));
+    } finally { await new Promise((r) => server.close(r)); }   // a failed assertion must not leave the server (and jest) hanging
   });
 });

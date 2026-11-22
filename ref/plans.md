@@ -2747,9 +2747,19 @@ edge; position-only loss, accepted.
   for the aiService foundation slice and have no caller. Remove the env var
   from the service and delete the file + its routeCatalog expectations in one
   slice; Fred undecided as of S2.
+- **Casey v2 S3a follow-ups** (2026-11-22): the Ask Casey manual chapter
+  (`manual/05-Subsystems/17-ask-yisracase.md`) describes v1; it carries a
+  short v2 preview note from S3a and gets its rewrite when v2 replaces v1
+  (S6). The mobile survey never opens the Casey sidebar (neither pane is in
+  its loop): S3a checked `casey.html` at the six widths by hand (puppeteer);
+  add a `casey` surface to `scripts/mobile-survey` when the pane is the
+  default. A thinking `display` of `updates` (progress notes) waits for the
+  beta header or GA.
 - **Casey v2 S2 follow-ups** (2026-11-22): an abort on client disconnect (a
-  turn runs to its end today; S3's page may want a Stop); "Keep going" on
-  `final.limited` (S3); `page_context` as a real block (S3); the effort menu is
+  turn runs to its end today; S3a added the page's Stop, which ends the turn
+  before its next model call); "Keep going" on `final.limited` (S3a: done);
+  `page_context` as a real block (S3a: the Page line from the shell's view);
+  the effort menu is
   low / medium / high — `xhigh` / `max` wait for a reason; the S2 checkpoint
   compares Opus 5.5, Sonnet 5.5 and Fable 5.1 on real questions and may
   shorten the model menu. From the S2 review: chat length is UNBOUNDED (no

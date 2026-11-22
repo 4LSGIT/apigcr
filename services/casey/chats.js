@@ -24,7 +24,7 @@ const TITLE_MAX = 120;
 const CLAIM_STALE_MIN = 15;   // > the longest turn (5 min budget + a 120 s floor per call + the 64k retry), < Cloud Run's 900 s request limit
 const LIST_MAX = 100;
 
-const CHAT_COLS = 'id, user_id, title, model, effort, prompt_version, thinking_floor_seq, running_since, created_at, updated_at';
+const CHAT_COLS = 'id, user_id, title, model, effort, prompt_version, thinking_floor_seq, running_since, stop_requested_at, created_at, updated_at';
 
 function parseJson(v) {
   if (v == null) return null;
@@ -64,13 +64,27 @@ async function deleteChat(db, id, userId) {
   return r.affectedRows === 1;
 }
 
-/** → true when this call took the claim. */
+/** → true when this call took the claim (and cleared any stale stop request). */
 async function claimTurn(db, id, userId) {
   const [r] = await db.query(
-    `UPDATE casey_chats SET running_since = UTC_TIMESTAMP()
+    `UPDATE casey_chats SET running_since = UTC_TIMESTAMP(), stop_requested_at = NULL
       WHERE id = ? AND user_id = ? AND (running_since IS NULL OR running_since < UTC_TIMESTAMP() - INTERVAL ${CLAIM_STALE_MIN} MINUTE)`,
     [id, userId]);
   return r.affectedRows === 1;
+}
+
+/** The page's Stop: marks a RUNNING turn of this user's chat. → true when a running turn was marked. */
+async function requestStop(db, id, userId) {
+  const [r] = await db.query(
+    'UPDATE casey_chats SET stop_requested_at = UTC_TIMESTAMP() WHERE id = ? AND user_id = ? AND running_since IS NOT NULL AND stop_requested_at IS NULL',
+    [id, userId]);
+  return r.affectedRows === 1;
+}
+
+/** The loop's check before each model call. */
+async function stopRequested(db, id) {
+  const [[row]] = await db.query('SELECT stop_requested_at IS NOT NULL AS s FROM casey_chats WHERE id = ?', [id]);
+  return !!(row && Number(row.s));
 }
 
 /**
@@ -136,5 +150,5 @@ async function deleteMessages(db, chatId, ids) {
 
 module.exports = {
   TITLE_MAX, CLAIM_STALE_MIN, LIST_MAX, titleFrom, parseJson, stripThinkingBlocks,
-  createChat, getChat, listChats, deleteChat, claimTurn, releaseTurn, loadMessages, appendMessage, deleteMessages,
+  createChat, getChat, listChats, deleteChat, claimTurn, releaseTurn, requestStop, stopRequested, loadMessages, appendMessage, deleteMessages,
 };

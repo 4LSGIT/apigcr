@@ -127,6 +127,18 @@ describe('the request body', () => {
     expect(init.body).not.toMatch(/budget_tokens|tool_choice/);
   });
 
+  test('thinkingDisplay → thinking.display (summarized | omitted); anything else is bad_request before any call', async () => {
+    stubFetch(streamResponse(toolTurn()), streamResponse(toolTurn()));
+    await aiService.converse(makeDb(), { ...OPTS, thinkingDisplay: 'summarized' });
+    expect(calls[0].body.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+    expect(Object.keys(calls[0].body)).toEqual(['model', 'max_tokens', 'system', 'tools', 'messages', 'thinking', 'output_config', 'stream']);
+    await aiService.converse(makeDb(), { ...OPTS, thinkingDisplay: 'omitted' });
+    expect(calls[1].body.thinking).toEqual({ type: 'adaptive', display: 'omitted' });
+    const r = await aiService.converse(makeDb(), { ...OPTS, thinkingDisplay: 'updates' });
+    expect(r).toMatchObject({ ok: false, error: 'bad_request', detail: expect.stringMatching(/thinkingDisplay/) });
+    expect(calls).toHaveLength(2);
+  });
+
   test('the message breakpoint: on a tool_result tail too; a string content becomes one cached block; an already-cached tail or an empty message is left alone', async () => {
     stubFetch(streamResponse(toolTurn()), streamResponse(toolTurn()), streamResponse(toolTurn()), streamResponse(toolTurn()));
     const results = [...MESSAGES, { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'whoami', input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: '{}' }, { type: 'text', text: 'note' }] }];

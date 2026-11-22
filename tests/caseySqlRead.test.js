@@ -31,7 +31,14 @@ describe('lib/caseySqlRules', () => {
   test('constants are v1\'s, with the LIMIT ceiling at 250', () => {
     expect([rules.MAX_SQL, rules.MAX_ROWS, rules.DEFAULT_ROWS]).toEqual([6000, 250, 50]);
     expect(rules.DENIED_NAMES).toEqual(['contact_ssn', 'contact_dob', 'password', 'password_hash', 'reset_token',
-      'contact_token', 'appt_manage_token', 'task_action_token', 'track_token', 'draft_key', 'attachments', 'delivery_info']);
+      'contact_token', 'appt_manage_token', 'task_action_token', 'track_token', 'draft_key', 'attachments']);   // delivery_info un-denied in S3a (checkpoint F1)
+    // email_log.body (S3a review): the account's grants cover it, so the rule refuses it — table-qualified.
+    expect(rules.checkSql("SELECT body FROM email_log WHERE processed_at >= '2026-11-01' LIMIT 5", ['email_log'])).toEqual({ ok: false, error: 'asks for a field Casey may not read: email_log.body (mail text)' });
+    expect(rules.checkSql("SELECT e.subject, e.delivery_info FROM email_log e WHERE e.processed_at >= '2026-11-01' AND e.subject LIKE '%body%' LIMIT 5", ['email_log']).ok).toBe(true);   // the word inside a literal
+    expect(rules.checkSql("SELECT subject FROM email_log WHERE processed_at >= '2026-11-01' /* body */ LIMIT 5", ['email_log']).ok).toBe(true);   // or a comment
+    expect(rules.checkSql('SELECT body FROM templates LIMIT 5', ['templates']).ok).toBe(true);   // another table's body is not mail
+    expect(rules.mailBody('select body from email_log', ['email_log'])).toBe(true);
+    expect(rules.mailBody('select bodyguard from email_log', ['email_log'])).toBe(false);
   });
   test('trailingLimit reads only a TRAILING LIMIT', () => {
     expect(rules.trailingLimit('SELECT 1 LIMIT 5')).toBe(5);

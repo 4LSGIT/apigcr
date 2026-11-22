@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casey</title>
+<!-- public/casey.html — Casey v2's pane (ref/CASEY_V2_DESIGN.md §4.6, as built §9 S3a).
+     Loaded by the shell into #caseyFrame when GET /api/casey/boot says v2 is on
+     (otherwise the shell loads the v1 pane, /assistant.html). Everything goes
+     through the parent's apiSend (waitForParent below; the page never reads the
+     JWT, AI_CONTEXT §3): POST /api/casey/turn as an NDJSON stream rendered line
+     by line into the trail, GET/DELETE /api/casey/chats, POST /api/casey/turn/stop.
+     The page context (which file or tab the user is on) comes from the shell's
+     ycAssistantContext() and rides as `context` on the turn — the loop puts it in
+     the user message's context block, never in the prompt prefix. -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--page-bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: flex; flex-direction: column; min-width: 0; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--border); border-radius: 6px; background: var(--surface, var(--page-bg)); color: var(--text); padding: 6px 10px; }
+  button.linkish { border: 0; background: transparent; padding: 0; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-text, #fff); border-color: var(--accent); }
+  button.danger { color: var(--danger); }
+  .yc-hint { color: var(--text-muted); font-size: var(--fs-xs, 12px); }
+
+  #top { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg, var(--page-bg)); flex-wrap: wrap; }
+  #top h1 { font-size: 15px; margin: 0; flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #top .chip { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
+  #chatPick { max-width: 100%; min-width: 0; font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface, var(--page-bg)); color: var(--text); }
+
+  #log { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 100%; border-radius: 10px; padding: 8px 12px; word-wrap: break-word; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: var(--accent-soft, var(--hover)); color: var(--accent-on-soft, var(--text)); white-space: pre-wrap; max-width: 92%; }
+  .msg.assistant { align-self: stretch; background: var(--surface, transparent); border: 1px solid var(--border); }
+  .msg.assistant.error { border-color: var(--danger); color: var(--danger); }
+  .msg.assistant.streaming:empty::after { content: "…"; color: var(--text-muted); }
+  .md p { margin: 0 0 8px; } .md p:last-child { margin-bottom: 0; }
+  .md h1, .md h2, .md h3 { font-size: 14px; margin: 10px 0 4px; } .md h1 { font-size: 16px; }
+  .md ul, .md ol { margin: 4px 0 8px; padding-left: 22px; }
+  .md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--hover); border-radius: 4px; padding: 0 4px; }
+  .md pre { background: var(--hover); border-radius: 6px; padding: 8px; overflow-x: auto; font-size: 12px; }
+  .md pre code { background: none; padding: 0; }
+  /* A wide table scrolls inside .tbl rather than squeezing its cells to one
+     character a line (the .msg overflow-wrap:anywhere must not reach cells). */
+  .md .tbl { overflow-x: auto; max-width: 100%; margin: 6px 0; }
+  .md table { border-collapse: collapse; font-size: 13px; width: max-content; min-width: 100%; max-width: none; }
+  .md th, .md td { border: 1px solid var(--border); padding: 3px 8px; text-align: left; vertical-align: top; overflow-wrap: normal; word-break: normal; max-width: 28em; }
+  .md th { background: var(--hover); }
+
+  .trail { align-self: stretch; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-muted); }
+  .trail .step { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+  .trail .step > button { border: 0; background: transparent; padding: 0; color: inherit; text-align: left; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trail .step .st { flex: 0 0 auto; width: 14px; text-align: center; }
+  .trail .step.ok .st { color: var(--ok); } .trail .step.err .st { color: var(--danger); } .trail .step.run .st { color: var(--text-muted); }
+  .trail .note { font-style: italic; }
+  .trail .step .ms { flex: 0 0 auto; }
+  .trail pre { margin: 2px 0 6px 20px; font-size: 11px; max-height: 240px; overflow: auto; background: var(--hover); border-radius: 6px; padding: 6px; white-space: pre-wrap; word-break: break-all; }
+  .trail .think { font-style: italic; }
+  .meta { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+  .keep { margin-top: 6px; }
+
+  #compose { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--sidebar-bg, var(--page-bg)); }
+  #compose .row { display: flex; gap: 6px; align-items: flex-end; }
+  #text { flex: 1 1 auto; min-width: 0; min-height: 40px; max-height: 160px; resize: vertical; font: inherit; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface, var(--page-bg)); color: var(--text); }
+  #ctx { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  #ctx .chip { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; max-width: 100%; }
+  #ctx .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #ctx .chip button { border: 0; background: transparent; padding: 0 2px; }
+  #empty { text-align: center; color: var(--text-muted); padding: 24px 12px; }
+  #empty .yc-hint { display: block; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="top">
+  <h1 id="title">Casey</h1>
+  <span class="chip" id="modelChip" title="Model this chat runs on"></span>
+  <select id="chatPick" aria-label="Recent chats"><option value="">New chat</option></select>
+  <button type="button" id="newChat" title="Start a new chat"><i class="fa-solid fa-plus"></i></button>
+  <button type="button" id="delChat" class="danger" title="Delete this chat" hidden><i class="fa-solid fa-trash"></i></button>
+</div>
+<div id="log"><div id="empty">Ask about cases, contacts, tasks, mail — or how the app works.<span class="yc-hint">Casey looks things up as you, and shows every step.</span></div></div>
+<div id="compose">
+  <div id="ctx"></div>
+  <div class="row">
+    <textarea id="text" rows="2" placeholder="Ask Casey…" maxlength="4000" aria-label="Your question"></textarea>
+    <button type="button" id="send" class="primary" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
+    <button type="button" id="stop" class="danger" title="Stop this turn" hidden><i class="fa-solid fa-stop"></i></button>
+  </div>
+</div>
+<script>
+'use strict';
+const P = window.parent;
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const E = (id) => document.getElementById(id);
+const CONTEXT_PREFIX = '[context — refreshed each turn]';
+
+// ── a small, safe markdown renderer: escape everything first, then mark up ──
+// headings, bold, inline code, fenced code, bullet / numbered lists, pipe tables.
+function inline(s) {
+  return esc(s)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+}
+function renderMd(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let i = 0;
+  const isRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+  while (i < lines.length) {
+    let l = lines[i];
+    if (/^\s*```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]); i++; out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`); continue; }
+    const h = /^(#{1,3})\s+(.*)$/.exec(l);
+    if (h) { out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); i++; continue; }
+    if (isRow(l) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      const cells = (r) => r.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => inline(c.trim()));
+      const head = cells(l); i += 2; const rows = [];
+      while (i < lines.length && isRow(lines[i])) rows.push(cells(lines[i++]));
+      out.push(`<div class="tbl"><table><thead><tr>${head.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      continue;
+    }
+    if (/^\s*[-*•]\s+/.test(l)) { const items = []; while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) items.push(inline(lines[i++].replace(/^\s*[-*•]\s+/, ''))); out.push(`<ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul>`); continue; }
+    if (/^\s*\d+[.)]\s+/.test(l)) { const items = []; while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) items.push(inline(lines[i++].replace(/^\s*\d+[.)]\s+/, ''))); out.push(`<ol>${items.map((x) => `<li>${x}</li>`).join('')}</ol>`); continue; }
+    if (!l.trim()) { i++; continue; }
+    const para = []; while (i < lines.length && lines[i].trim() && !/^\s*```|^#{1,3}\s|^\s*[-*•]\s+|^\s*\d+[.)]\s+/.test(lines[i]) && !(isRow(lines[i]) && i + 1 < lines.length && isSep(lines[i + 1]))) para.push(lines[i++]);
+    out.push(`<p>${para.map(inline).join('<br>')}</p>`);
+  }
+  return out.join('');
+}
+
+// ── state ──────────────────────────────────────────────────────────────────
+let boot = null;            // GET /api/casey/boot
+let chatId = null;          // the open chat, or null for a new one
+let running = false;        // a turn in flight
+let chats = [];             // the list
+let contextOn = true;       // the shell's workspace context is attached to the next turn
+let stopPending = false;    // Stop pressed before this turn's `chat` line (the claim is taken by then): posted when it lands
+let turnClaimed = false;    // this turn's `chat` line has arrived
+
+const log = E('log'), textEl = E('text'), sendBtn = E('send'), stopBtn = E('stop'), pick = E('chatPick'), chip = E('modelChip');
+
+function summarizeInput(input) {
+  try { const s = JSON.stringify(input); return s.length > 140 ? s.slice(0, 140) + '…' : s; } catch (_) { return ''; }
+}
+function fmtCents(c) { const n = Number(c); return Number.isFinite(n) ? (n < 1 ? `${(n).toFixed(2)}¢` : `${n.toFixed(1)}¢`) : ''; }
+function fmtMs(ms) { const n = Number(ms); return Number.isFinite(n) ? (n >= 1000 ? `${(n / 1000).toFixed(1)} s` : `${n} ms`) : ''; }
+function scrollDown() { log.scrollTop = log.scrollHeight; }
+function clearEmpty() { const e = E('empty'); if (e) e.remove(); }
+
+// ── rendering ──────────────────────────────────────────────────────────────
+function addUser(text) {
+  clearEmpty();
+  const d = document.createElement('div'); d.className = 'msg user'; d.textContent = text; log.appendChild(d); scrollDown();
+}
+function newTrail() { const t = document.createElement('div'); t.className = 'trail'; log.appendChild(t); return t; }
+function trailStep(trail, { id, name, input, ok, code, ms, status }) {
+  let step = Array.from(trail.querySelectorAll('.step')).find((s) => s.dataset.id === String(id)) || null;
+  if (!step) {
+    step = document.createElement('div'); step.className = 'step run'; step.dataset.id = id;
+    step.innerHTML = `<span class="st"><i class="fa-solid fa-circle-notch fa-spin"></i></span><button type="button" title="Show the call"></button><span class="ms"></span>`;
+    const pre = document.createElement('pre'); pre.hidden = true; pre.textContent = JSON.stringify({ tool: name, input }, null, 1);
+    step.querySelector('button').addEventListener('click', () => { pre.hidden = !pre.hidden; });
+    trail.appendChild(step); trail.appendChild(pre);
+  }
+  step.querySelector('button').textContent = `${name} ${summarizeInput(input)}`;
+  if (status === 'done') {
+    step.className = `step ${ok ? 'ok' : 'err'}`;
+    step.querySelector('.st').innerHTML = ok ? '<i class="fa-solid fa-check"></i>' : '<i class="fa-solid fa-xmark"></i>';
+    step.querySelector('.ms').textContent = (ok ? '' : (code || 'failed') + ' · ') + fmtMs(ms);
+  }
+  scrollDown();
+}
+function trailThink(trail, text) {
+  let t = trail.querySelector('.think:last-child');
+  if (!t || t.dataset.closed) { t = document.createElement('div'); t.className = 'think'; t.textContent = ''; trail.appendChild(t); }
+  t.textContent = (t.textContent + text).slice(-400);
+  scrollDown();
+}
+function addAssistant(text, { error = false, streaming = false } = {}) {
+  clearEmpty();
+  const d = document.createElement('div'); d.className = `msg assistant md${error ? ' error' : ''}${streaming ? ' streaming' : ''}`;
+  if (streaming) { d.dataset.raw = text || ''; d.textContent = text || ''; } else d.innerHTML = renderMd(text);
+  log.appendChild(d); scrollDown(); return d;
+}
+function finishAssistant(d, text, meta) {
+  d.classList.remove('streaming'); delete d.dataset.raw;
+  d.innerHTML = renderMd(text) + (meta ? `<div class="meta">${esc(meta)}</div>` : '');
+  scrollDown();
+}
+function keepGoingButton(d) {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'keep'; b.textContent = 'Keep going';
+  b.title = 'Casey hit this turn\'s tool budget; ask it to continue';
+  b.addEventListener('click', () => { b.disabled = true; sendTurn(boot && boot.continue_text || 'Keep going.'); });
+  d.appendChild(b);
+}
+
+/**
+ * A stored transcript (GET /api/casey/chats/:id) → the same look as a live turn.
+ * Results are paired to their tool_use by id across the whole log (a map from
+ * id to the trail that holds the step), so an assistant row that carried text
+ * AND tool_use blocks, or a round answered rows later, still pairs; a user row
+ * that carries tool_result blocks is the loop's own message — its text blocks
+ * (the budget note) are the loop's, shown as a trail note, never as the user's
+ * words. The meta under an answer is the TURN's cost: the sum of the assistant
+ * rows since the user's last question, the figure the live final shows.
+ */
+function renderTranscript(messages) {
+  log.innerHTML = '';
+  let trail = null; const stepTrail = new Map(); const pending = new Map(); let turnCost = 0; let calls = 0;
+  for (const m of messages) {
+    const blocks = Array.isArray(m.content) ? m.content : [];
+    if (m.role === 'user') {
+      // A user row is the USER's turn when it carries the context block (the loop opens every turn with
+      // it — after any INTERRUPTED repair results it prepends); a row with results and no context block
+      // is the loop's own results message, whose text (the budget note) is shown as a trail note.
+      const isTurn = blocks.some((b) => b.type === 'text' && String(b.text).startsWith(CONTEXT_PREFIX)) || !blocks.some((b) => b.type === 'tool_result');
+      for (const b of blocks) {
+        if (b.type === 'tool_result') {
+          const t = stepTrail.get(b.tool_use_id) || trail || (trail = newTrail());
+          const p = pending.get(b.tool_use_id); let env = null; try { env = JSON.parse(b.content); } catch (_) {}
+          trailStep(t, { id: b.tool_use_id, name: p ? p.name : (env && env.tool) || '?', input: p ? p.input : {}, ok: env ? !!env.ok : !b.is_error, code: env && env.error && env.error.code, ms: env && env.ms, status: 'done' });
+        } else if (b.type !== 'text' || String(b.text).startsWith(CONTEXT_PREFIX)) {
+          // the context block is never shown
+        } else if (isTurn) { addUser(b.text); turnCost = 0; calls = 0; trail = null; }
+        else { const t = trail || (trail = newTrail()); const n = document.createElement('div'); n.className = 'note'; n.textContent = b.text; t.appendChild(n); }
+      }
+    } else {
+      const uses = blocks.filter((b) => b.type === 'tool_use');
+      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('');
+      turnCost += Number(m.meta && m.meta.cost_cents) || 0; calls += uses.length;
+      if (uses.length) { trail = trail || newTrail(); for (const u of uses) { pending.set(u.id, u); stepTrail.set(u.id, trail); trailStep(trail, { id: u.id, name: u.name, input: u.input, status: 'run' }); } }
+      if (text) {
+        const bits = [calls ? `${calls} tool call${calls === 1 ? '' : 's'}` : null, turnCost ? fmtCents(turnCost) : null].filter(Boolean).join(' · ');
+        const d = addAssistant(text); if (bits) d.insertAdjacentHTML('beforeend', `<div class="meta">${esc(bits)}</div>`);
+        trail = null;
+      }
+    }
+  }
+  // Steps that never got a result (an interrupted round) stay as "running" rows; the loop repairs them next turn.
+  scrollDown();
+}
+
+// ── context chip (the shell's workspace) ───────────────────────────────────
+function captureContext() {
+  try {
+    const v = typeof P.ycAssistantContext === 'function' ? P.ycAssistantContext() : null;
+    if (!v || !v.snapshot) return null;
+    const a = v.snapshot.active || {};
+    const ctx = { label: v.display_label || 'Current workspace' };
+    if (a.kind === 'file' && a.entity) { if (a.entity.kind === 'case') ctx.case_id = String(a.entity.id); if (a.entity.kind === 'contact') ctx.contact_id = String(a.entity.id); }
+    return ctx;
+  } catch (_) { return null; }
+}
+function renderContext() {
+  const box = E('ctx'); const c = contextOn ? captureContext() : null;
+  if (!c) {
+    box.innerHTML = `<button type="button" id="addCtx" class="yc-hint linkish"><i class="fa-solid fa-plus"></i> Add current view</button>`;
+    E('addCtx').addEventListener('click', () => { contextOn = true; renderContext(); });
+    return;
+  }
+  box.innerHTML = `<span class="chip" title="Casey is told where you are"><i class="fa-solid fa-window-maximize"></i><span>${esc(c.label)}</span><button type="button" id="rmCtx" title="Send without the current view" aria-label="Remove context"><i class="fa-solid fa-xmark"></i></button></span>`;
+  E('rmCtx').addEventListener('click', () => { contextOn = false; renderContext(); });
+}
+
+// ── chats ──────────────────────────────────────────────────────────────────
+async function loadChats() {
+  const r = await P.apiSend('/api/casey/chats');
+  chats = r.chats || [];
+  // The open chat is gone (a failed opening turn is rolled back server-side before its stream ends; a delete in another tab): back to a new one.
+  if (chatId && !chats.some((c) => Number(c.id) === Number(chatId))) { chatId = null; E('delChat').hidden = true; E('title').textContent = 'Casey'; }
+  pick.innerHTML = '<option value="">New chat</option>' + chats.map((c) => `<option value="${c.id}">${esc(c.title.length > 60 ? c.title.slice(0, 60) + '…' : c.title)}</option>`).join('');
+  pick.value = chatId ? String(chatId) : '';
+}
+async function openChat(id) {
+  chatId = id;
+  E('delChat').hidden = !id;
+  if (!id) { log.innerHTML = '<div id="empty">Ask about cases, contacts, tasks, mail — or how the app works.<span class="yc-hint">Casey looks things up as you, and shows every step.</span></div>'; chip.textContent = boot ? boot.model : ''; E('title').textContent = 'Casey'; pick.value = ''; return; }
+  try {
+    const r = await P.apiSend(`/api/casey/chats/${id}`);
+    chip.textContent = r.chat.model; E('title').textContent = r.chat.title;
+    renderTranscript(r.messages || []);
+    pick.value = String(id);
+  } catch (err) {
+    chatId = null; E('delChat').hidden = true;
+    log.innerHTML = ''; addAssistant(err && err.status === 404 ? 'That chat is gone.' : (err && err.message) || 'Could not open the chat', { error: true });
+    loadChats().catch(() => {});
+  }
+}
+
+// ── a turn ─────────────────────────────────────────────────────────────────
+async function sendTurn(text) {
+  const q = String(text || '').trim();
+  if (!q || running) return;
+  running = true; stopPending = false; turnClaimed = false; sendBtn.disabled = true; stopBtn.hidden = false; textEl.value = '';
+  addUser(q);
+  const trail = newTrail();
+  let answer = null, answerText = '';
+  const ctx = contextOn ? captureContext() : null;
+  try {
+    const res = await P.apiSend('/api/casey/turn', 'POST', { ...(chatId ? { chat_id: chatId } : {}), text: q, ...(ctx ? { context: ctx } : {}) }, {}, { responseType: 'response' });
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    const onLine = (ev) => {
+      if (ev.type === 'chat') { if (!chatId) { chatId = ev.id; E('delChat').hidden = false; E('title').textContent = ev.title; } chip.textContent = ev.model; turnClaimed = true; if (stopPending) { stopPending = false; stopTurn(); } }
+      else if (ev.type === 'tool_call') trailStep(trail, { id: ev.id, name: ev.name, input: ev.input, status: 'run' });
+      else if (ev.type === 'tool_result') trailStep(trail, { id: ev.id, name: ev.name, input: undefined, ok: ev.ok, code: ev.code, ms: ev.ms, status: 'done' });
+      else if (ev.type === 'thinking') { if (ev.text) trailThink(trail, ev.text); }
+      else if (ev.type === 'delta') { if (!answer) answer = addAssistant('', { streaming: true }); answerText += ev.text; answer.textContent = answerText; scrollDown(); }
+      else if (ev.type === 'reset') { answerText = ''; if (answer) answer.textContent = ''; }
+      else if (ev.type === 'heartbeat') { /* keeps the socket warm */ }
+      else if (ev.type === 'final') {
+        const b = ev.body; if (!answer) answer = addAssistant('', { streaming: true });
+        const bits = [`${b.calls} tool call${b.calls === 1 ? '' : 's'}`, fmtMs(b.ms), fmtCents(b.cost_cents)];
+        if (b.stopped) bits.push('stopped'); if (b.limited) bits.push('tool budget reached');
+        finishAssistant(answer, b.text, bits.filter(Boolean).join(' · '));
+        if (b.limited && !b.stopped) keepGoingButton(answer);
+      }
+      else if (ev.type === 'error') { addAssistant(`${ev.message}${ev.detail ? ` — ${ev.detail}` : ''}`, { error: true }); }
+    };
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl; while ((nl = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); if (line.trim()) { try { onLine(JSON.parse(line)); } catch (_) { /* a cut line */ } } }
+    }
+    if (!answer) addAssistant('Casey returned nothing.', { error: true });
+  } catch (err) {
+    addAssistant(err && err.message ? err.message : 'The request failed', { error: true });
+  } finally {
+    stopPending = false; stopBtn.hidden = true;
+    const think = trail.querySelector('.think:last-child'); if (think) think.dataset.closed = '1';
+    if (!trail.children.length) trail.remove();
+    // The list reload is what forgets a chat the server no longer has — a new chat whose opening turn failed
+    // is rolled back before the stream ends (services/casey/loop.js rollbackIfOpening), a chat deleted in
+    // another tab likewise — so Send stays off until it is back: the next Send must not post a dead id.
+    try { await loadChats(); } catch (_) { /* the list is cosmetic; the next Send tells */ }
+    running = false; sendBtn.disabled = false;
+    textEl.focus();
+  }
+}
+
+async function stopTurn() {
+  if (!running) return;
+  if (!turnClaimed) { stopPending = true; return; }   // before this turn's `chat` line the claim may not be taken yet (a Stop then is a no-op server-side)
+  stopBtn.disabled = true;
+  try { await P.apiSend('/api/casey/turn/stop', 'POST', { chat_id: chatId }); } catch (_) {}
+  finally { stopBtn.disabled = false; }
+}
+
+async function deleteChat() {
+  if (!chatId || running) return;
+  const id = chatId;
+  await P.apiSend(`/api/casey/chats/${id}`, 'DELETE');
+  chatId = null; await loadChats(); await openChat(null);
+}
+
+// ── boot ───────────────────────────────────────────────────────────────────
+async function start() {
+  try { boot = await P.apiSend('/api/casey/boot'); } catch (_) { boot = null; }
+  if (!boot || !boot.enabled) { log.innerHTML = '<div id="empty">Casey v2 is off.<span class="yc-hint">The shell loads the previous Casey when it is.</span></div>'; sendBtn.disabled = true; return; }
+  chip.textContent = boot.model;
+  textEl.maxLength = boot.limits && boot.limits.text_max || 4000;
+  window.ycAssistantRefreshContext = renderContext;   // the shell calls this as files/tabs change (the same hook as v1's pane)
+  renderContext();
+  // A `?ask=` link: the shell holds the question until a Casey pane takes it (v1 does the same).
+  try { const draft = typeof P.ycTakeAssistantDraft === 'function' ? P.ycTakeAssistantDraft() : null; if (draft) textEl.value = String(draft).slice(0, textEl.maxLength); } catch (_) {}
+  await loadChats().catch(() => {});
+  sendBtn.addEventListener('click', () => sendTurn(textEl.value));
+  textEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTurn(textEl.value); } });
+  stopBtn.addEventListener('click', stopTurn);
+  E('newChat').addEventListener('click', () => { if (!running) openChat(null); });
+  E('delChat').addEventListener('click', deleteChat);
+  pick.addEventListener('change', () => { if (!running) openChat(pick.value ? Number(pick.value) : null); });
+  textEl.focus();
+}
+(function waitForParent() {
+  if (P && P !== window && typeof P.apiSend === 'function') start();
+  else setTimeout(waitForParent, 100);
+})();
+</script>
+</body>
+</html>

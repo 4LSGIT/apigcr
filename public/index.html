@@ -7837,8 +7837,18 @@
       const frame = E('caseyFrame');
       if (!frame) return false;
       if (frame.dataset.src) {
-        frame.src = frame.dataset.src;
+        // Casey v2 S3a: which Casey this user gets is the server's say
+        // (GET /api/casey/boot → enabled when casey_v2_enabled is on). The
+        // frame is long-lived, so the choice is made once, when it first opens;
+        // a flag flip reaches an open shell on its next reload. Any failure to
+        // ask falls back to the v1 pane.
+        const v1Src = frame.dataset.src;
         delete frame.dataset.src;
+        frame.src = 'about:blank';
+        Promise.resolve()
+          .then(function () { return window.apiSend('/api/casey/boot'); })
+          .then(function (boot) { frame.src = boot && boot.enabled ? '/casey.html' : v1Src; })
+          .catch(function () { frame.src = v1Src; });
       }
       if (!document.body.classList.contains('casey-sidebar-open')) {
         caseySidebarPrior = {

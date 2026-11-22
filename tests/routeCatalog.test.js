@@ -313,7 +313,7 @@ describe('snapshots — a change here is a deliberate review', () => {
       'POST /api/ai/file', 'POST /api/api-keys', 'POST /api/api-keys/rotate-internal', 'POST /api/assistant/actions/:draftId/claim', 'POST /api/assistant/actions/:draftId/result', 'POST /api/assistant/actions/reconcile',
       'POST /api/assistant/chats', 'DELETE /api/assistant/chats/:id(\\d+)', 'PATCH /api/assistant/chats/:id(\\d+)', 'POST /api/assistant/chats/:id(\\d+)/messages',
       'POST /api/assistant/execute', 'POST /api/assistant/plan', 'POST /api/auth/change-password', 'POST /api/auth/update-profile',
-      'DELETE /api/casey/chats/:id', 'POST /api/casey/tools/:name', 'POST /api/casey/turn',
+      'DELETE /api/casey/chats/:id', 'POST /api/casey/tools/:name', 'POST /api/casey/turn', 'POST /api/casey/turn/stop',
       'POST /api/esign/:id/resend', 'POST /api/esign/:id/satisfied-external', 'POST /api/esign/send', 'POST /api/esign/templates/:id/pdf',
       'POST /api/impersonation/exit', 'POST /api/impersonation/mode', 'POST /api/impersonation/users/:id/start', 'POST /api/pdf/parse',
       'POST /api/readonly-keys', 'POST /internal/dropbox/create-folder', 'POST /internal/email-test/send', 'POST /internal/email/send', 'POST /internal/hook-replay',
@@ -325,7 +325,7 @@ describe('snapshots — a change here is a deliberate review', () => {
 
   test('closed staff GETs (not auto, not a card) — credential-returning reads and plumbing', () => {
     expect(rows.filter(r => STAFF.has(r.authClass) && r.authClass !== 'su' && r.method === 'GET' && !r.autoGet).map(at)).toEqual([
-      'GET /api/assistant/chats', 'GET /api/assistant/chats/:id(\\d+)', 'GET /api/comms-archive/media/:id/url', 'GET /api/credentials', 'GET /api/email-credentials',
+      'GET /api/assistant/chats', 'GET /api/assistant/chats/:id(\\d+)', 'GET /api/casey/boot', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/comms-archive/media/:id/url', 'GET /api/credentials', 'GET /api/email-credentials',
       'GET /api/hooks', 'GET /api/hooks/:id', 'GET /api/impersonation/users', 'GET /auth/validate', 'GET /clio-code',
       'GET /internal/email-test/credentials', 'GET /internal/email-test/credentials/oauth',
     ]);
@@ -337,7 +337,7 @@ describe('snapshots — a change here is a deliberate review', () => {
     expect(suGets.every(r => r.autoGet === false && r.tier === 3)).toBe(true);
     expect(suGets.filter(r => !r.proposable).map(at)).toEqual([
       'GET /admin/api-tester/history', 'GET /admin/api-tester/saved', 'GET /admin/api-tester/saved/:id', 'GET /admin/db/saved-queries',
-      'GET /admin/db/schema', 'GET /admin/db/schema.sql', 'GET /api/casey/catalog', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/casey/tools', 'GET /api/credentials/:id/reveal', 'GET /api/email-credentials/:id/reveal',
+      'GET /admin/db/schema', 'GET /admin/db/schema.sql', 'GET /api/casey/catalog', 'GET /api/casey/tools', 'GET /api/credentials/:id/reveal', 'GET /api/email-credentials/:id/reveal',
     ]);
   });
 
@@ -373,7 +373,7 @@ describe('snapshots — a change here is a deliberate review', () => {
     // definition is a review (review 2026-11-22, finding 7).
     const DEFINED_IN = {
       adminAuth: ['api.streak.js'], memberAuth: ['api.streak.js'], checkApiKey: ['ringcentral.js'],
-      chatRate: ['api.assistant.js'], staffOnly: ['api.assistant.js'],
+      chatRate: ['api.assistant.js'], staffOnly: ['api.assistant.js', 'api.casey.js'],
       gate: ['_aitest.js', '_courtexec.js', '_errtest.js'],
       gateByScope: ['api.uiConfig.js'], perKeyGate: ['api.appSettings.js'],
       limitDraft: ['api.reports.js'], limitPreview: ['api.reports.js'], requireUser: ['api.reports.js'],

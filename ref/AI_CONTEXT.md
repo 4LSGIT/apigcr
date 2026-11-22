@@ -27,6 +27,16 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S3a — the page (11-22):** `public/casey.html` in the shell's
+  `#caseyFrame` when `GET /api/casey/boot` says v2 is on (`openCasey` decides
+  once per shell load; v1's `/assistant.html` otherwise). The turn / chat
+  routes are staff (`jwtOrApiKey` + `staffOnly`, 403 while the flag is '0',
+  checked in the handler); `POST /api/casey/turn/stop` + `casey_chats.
+  stop_requested_at` (migration `2026-11-22_casey_v2_s3a_stop.sql`); the
+  page's `context` → the user message's Page line; default model Sonnet 5.5;
+  `thinking.display: summarized`; `delivery_info` readable by `sql_read`;
+  prompt v2.1. Design §9 S3a.
+
 - **Casey v2 S2 — the loop (11-22):** `aiService.converse()` (messages + tools,
   streamed, blocks verbatim, one `ai_calls` row, per-model cache-read pricing)
   beside `call()`; `lib/caseyPrompt.js` (the system prompt as code; `signature`

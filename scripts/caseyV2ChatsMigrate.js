@@ -7,6 +7,11 @@
  * included, are read from ref/migrations/2026-11-22_casey_v2_chats.sql so the
  * file and the applied schema can never differ.
  *
+ * SUPERSEDED FOR CHECK by scripts/caseyV2S3aMigrate.js (S3a added
+ * casey_chats.stop_requested_at): on a database past S3a this script's CHECK
+ * reports that column as drift. Its --apply is still the S2 creation step on an
+ * empty database (the twin runs it first, then the S3a script).
+ *
  * DEPLOY ORDER (absolute):
  *   1. node scripts/caseyV2ChatsMigrate.js            # CHECK — read-only
  *   2. node scripts/caseyV2ChatsMigrate.js --apply    # CREATE both, verify

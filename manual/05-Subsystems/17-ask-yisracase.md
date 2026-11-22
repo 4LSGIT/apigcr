@@ -13,6 +13,23 @@ Opening or collapsing Casey does not change the workspace URL, cancel a
 request, discard attachments, or reload the assistant. On a phone, the same
 assistant uses the full-width sidebar sheet.
 
+## Casey v2 (preview)
+
+When the administrator turns on **Casey v2** (the setting `casey_v2_enabled`),
+the same **Ask Casey** button opens the new Casey instead of the one this
+chapter describes. The new Casey answers by looking things up as you — it runs
+searches, reads records through the app's own routes and reads the app's code
+and manual — and shows every step it took as a trail above the answer (click a
+step for the exact query or request). Pick an earlier chat from the list at the
+top, start a new one with **+**, delete one with the bin. **Stop** ends a turn
+that is taking too long; **Keep going** appears when Casey hit the per-turn
+limit before finishing. The **current view** chip tells Casey which case,
+contact or tab you are looking at ("this case" means that one); remove it to
+ask in general. In this preview Casey v2 is read-only: it will tell you what a
+change would take, and which screen does it, but it cannot make changes yet.
+Everything below describes the previous Casey, which the button opens while
+the setting is off.
+
 ## Asking a question
 
 Type naturally. Useful questions include:

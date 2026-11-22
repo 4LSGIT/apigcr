@@ -14,7 +14,7 @@ const loop = require('../services/casey/loop');
 const aiService = require('../services/aiService');
 
 test('version pinned; the text is built once and byte-identical; the schema context and the rules are in it', () => {
-  expect(prompt.VERSION).toBe('v2.0');
+  expect(prompt.VERSION).toBe('v2.1');
   const a = prompt.systemText();
   const b = prompt.systemText();
   expect(a).toBe(b);
@@ -22,7 +22,8 @@ test('version pinned; the text is built once and byte-identical; the schema cont
   expect(a.length).toBeGreaterThan(manifest.toPromptContext().length + 3000);
   for (const must of ['whoami', 'lookup_routes', 'api_get', 'sql_read', 'read_source', 'search_docs',
     'untrusted: true', 'Social Security', 'date of birth', 'password', 'LIMIT of 1–250', 'log_date', 'processed_at', 'CONVERT_TZ',
-    'READ-ONLY', 'contact_kind', 'case_relate_type', 'ONLY_FULL_GROUP_BY', 'truncated: true']) {
+    'READ-ONLY', 'contact_kind', 'case_relate_type', 'ONLY_FULL_GROUP_BY', 'truncated: true',
+    'tie for that place', 'Page line']) {
     expect(a).toContain(must);
   }
   // Nothing volatile in Casey's own text: no clock, no user, no zone value baked
@@ -40,7 +41,7 @@ test('generic: Casey\'s own text names no firm or person (the manifest\'s exampl
 test('signature(tools): stable across calls, changes with the tool definitions or the text', () => {
   const defs = tools.definitions();
   const s1 = prompt.signature(defs);
-  expect(s1).toMatch(/^v2\.0-[0-9a-f]{8}$/);
+  expect(s1).toMatch(/^v2\.1-[0-9a-f]{8}$/);
   expect(prompt.signature(tools.definitions())).toBe(s1);
   const altered = defs.map((d, i) => (i === 0 ? { ...d, description: d.description + ' ' } : d));
   expect(prompt.signature(altered)).not.toBe(s1);

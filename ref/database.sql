@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-22T14:51:22.462Z
+-- Generated: 2026-11-22T17:12:28.250Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:3a1f563a88f183f02c66fe787733d432
+-- Fingerprint: sha256:300684d1e22a0de8e05b5ed845df0662
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -819,6 +819,7 @@ CREATE TABLE `casey_chats` (
   `prompt_version` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'lib/caseyPrompt.signature(tools) the chat was last continued under. When the current signature differs, the loop drops the stored thinking blocks before continuing (they cannot be replayed against a changed prefix), raises thinking_floor_seq past them and re-stamps this.',
   `thinking_floor_seq` int NOT NULL DEFAULT '0' COMMENT 'Rows with seq below this have their thinking / redacted_thinking blocks DROPPED on every load: they were produced under another prefix (a prompt or tool change, or a binding 400) and can never be replayed. Only ever raised. The rows themselves are never edited.',
   `running_since` datetime DEFAULT NULL COMMENT 'UTC. Set by the ONE conditional UPDATE that claims the chat for a turn (one turn in flight per chat; a second POST /api/casey/turn is 409), cleared when the turn ends. A claim older than 15 minutes is treated as free (a turn that died with its instance; the longest turn — the 5-minute tool budget plus the closing call and the one 64k retry at 120 s each — ends well inside it).',
+  `stop_requested_at` datetime DEFAULT NULL COMMENT 'UTC. Set by POST /api/casey/turn/stop while a turn is running (running_since not NULL); the loop checks it before every model call and ends the turn with a text-only [Stopped by the user.] row. Cleared by the next claim.',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC (the pool runs UTC).',
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'UTC; the chat list orders by it.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Casey v2 chats (ref/CASEY_V2_DESIGN.md §4.6): one row per conversation of the tool-use loop, private to its user; the messages are casey_messages rows.';

@@ -50,7 +50,26 @@ describe('Ask Casey sidebar host', () => {
     expect(doc.getElementById('askCaseyOpen').textContent).toMatch(/Ask Casey/);
   });
 
-  test('collapse and expand reuse the iframe and never mutate the workspace URL', () => {
+  test('the frame loads the v2 pane when the server says v2 is on, the v1 pane otherwise or on any failure', async () => {
+    for (const [apiSend, expected] of [[async () => ({ status: 'success', enabled: true }), '/casey.html'], [async () => ({ status: 'success', enabled: false }), '/assistant.html'], [async () => { throw new Error('offline'); }, '/assistant.html']]) {
+      const dom = new JSDOM('<!doctype html><body><iframe id="caseyFrame" data-src="/assistant.html"></iframe></body>', { url: 'https://app.test/', runScripts: 'outside-only' });
+      const w = dom.window;
+      w.E = (id) => w.document.getElementById(id);
+      w.matchMedia = () => ({ matches: false });
+      w.caseySidebarPrior = null;
+      w.apiSend = apiSend;
+      w.eval(`${fnSrc(SHELL, 'openCasey')}`);
+      expect(w.openCasey()).toBe(true);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(w.E('caseyFrame').getAttribute('src')).toBe(expected);
+      expect(w.E('caseyFrame').hasAttribute('data-src')).toBe(false);
+      expect(w.openCasey()).toBe(true);                               // a second open never reloads the frame
+      await new Promise((r) => setTimeout(r, 0));
+      expect(w.E('caseyFrame').getAttribute('src')).toBe(expected);
+    }
+  });
+
+  test('collapse and expand reuse the iframe and never mutate the workspace URL', async () => {
     const dom = new JSDOM('<!doctype html><body><iframe id="caseyFrame" data-src="/assistant.html"></iframe></body>', {
       url: 'https://app.test/?files=cCASE1234&open=file%3A0', runScripts: 'outside-only',
     });
@@ -62,7 +81,11 @@ describe('Ask Casey sidebar host', () => {
     w.eval(`${fnSrc(SHELL, 'openCasey')}\n${fnSrc(SHELL, 'closeCasey')}\n${fnSrc(SHELL, 'toggleCaseyExpanded')}`);
     const frame = w.E('caseyFrame');
     const before = w.location.href;
+    // Casey v2 S3a: the frame's src is decided by GET /api/casey/boot (v2 on → /casey.html);
+    // with no apiSend at all (this bare window) the choice falls back to the v1 pane.
     expect(w.openCasey()).toBe(true);
+    expect(frame.getAttribute('src')).toBe('about:blank');
+    await new Promise((r) => setTimeout(r, 0));
     expect(frame.getAttribute('src')).toBe('/assistant.html');
     expect(w.closeCasey()).toBe(true);
     expect(w.document.body.classList.contains('sidebar-skinny')).toBe(true);
