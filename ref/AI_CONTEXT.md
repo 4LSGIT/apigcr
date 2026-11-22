@@ -27,6 +27,16 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S1 — the tool layer (11-22):** `services/casey/tools/` — `whoami`,
+  `sql_read` (report pool + `lib/caseySqlRules.js`, v1's three rules), `api_get`
+  (loopback as the user, catalog-gated by `routeCatalog.findRoute` + `autoGet`,
+  JSON only, Authorization forwarded, elevation not), `lookup_routes` (judged
+  for the caller), `read_source` (real-path confined to six dirs),
+  `search_docs`; `runTool` wraps every result in one envelope. Exposed only to
+  SU through `POST /api/casey/tools/:name`, dark while `casey_v2_enabled`='0'.
+  A new tool = a file there + its row in `tests/caseyTools.test.js`'s name list.
+  Design §9 S1.
+
 - **Casey v2 S0 — route catalog + sensitivity (11-22):** `lib/routeCatalog.js`
   classifies every live route (six auth classes from identity, the new
   `authMeta` stamps on the auth factories in `lib/auth.*`, and a pinned

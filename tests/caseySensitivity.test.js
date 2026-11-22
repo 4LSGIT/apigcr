@@ -170,7 +170,7 @@ describe('the lists are exact snapshots — a change is a deliberate review', ()
     expect(S.NEVER_AUTO_GET.map(r => r.source)).toEqual([
       '^(GET|HEAD) \\/api\\/credentials(\\/|$)', '^(GET|HEAD) \\/api\\/api-keys(\\/|$)', '^(GET|HEAD) \\/api\\/readonly-keys(\\/|$)',
       '^(GET|HEAD) \\/api\\/email-credentials(\\/|$)', '^(GET|HEAD) \\/internal(\\/|$)', '^(GET|HEAD) \\/api\\/impersonation(\\/|$)',
-      '^(GET|HEAD) \\/api\\/hooks$', '^(GET|HEAD) \\/api\\/hooks\\/:id$',
+      '^(GET|HEAD) \\/api\\/hooks$', '^(GET|HEAD) \\/api\\/hooks\\/:id$', '^(GET|HEAD) \\/api\\/comms-archive\\/media\\/:id\\/url$',
     ]);
   });
   test('lists are frozen', () => {

@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-22T04:28:22.648Z_  
-_868 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 337, PUT: 41, _ALL: 3_
+_Generated 2026-11-22T09:10:43.833Z_  
+_870 routes total — DELETE: 72, GET: 355, PATCH: 61, POST: 338, PUT: 41, _ALL: 3_
 
 ## Global middleware chain
 
@@ -167,6 +167,8 @@ _868 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 337, PUT: 41, _ALL:
 | GET | `/api/cases/:id/workflows` | `jwtOrApiKey` | — |
 | GET | `/api/cases/search` | `jwtOrApiKey` | — |
 | GET | `/api/casey/catalog` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/casey/tools` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/casey/tools/:name` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/cause_error` | `jwtOrApiKey` | — |
 | POST | `/api/code-box/runs` | `markViewAsControl`, `staffAuth` | — |
 | POST | `/api/code-box/runs/:id/finish` | `markViewAsControl`, `staffAuth` | — |
@@ -1143,4 +1145,4 @@ _868 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 337, PUT: 41, _ALL:
 
 ---
 
-_868 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 337, PUT: 41, _ALL: 3_
+_870 routes total — DELETE: 72, GET: 355, PATCH: 61, POST: 338, PUT: 41, _ALL: 3_

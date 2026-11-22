@@ -42,6 +42,7 @@ lib/caseId.js
 lib/caseRoleResolver.js
 lib/caseyAutomationAllowlist.js
 lib/caseySensitivity.js
+lib/caseySqlRules.js
 lib/checklistStatus.js
 lib/codeStepGate.js
 lib/complianceFooter.js
@@ -1114,6 +1115,14 @@ services/campaignSegmentService.js
 services/campaignService.js
 services/caseEventService.js
 services/caseService.js
+services/casey/tools/api_get.js
+services/casey/tools/index.js
+services/casey/tools/index_error.js
+services/casey/tools/lookup_routes.js
+services/casey/tools/read_source.js
+services/casey/tools/search_docs.js
+services/casey/tools/sql_read.js
+services/casey/tools/whoami.js
 services/clientUploadBatchService.js
 services/clientUploadCompletionService.js
 services/commsArchiveAdmin.js
@@ -1361,6 +1370,7 @@ tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/casesJudgeTrusteeColumns.test.js
 tests/caseyActionPermissions.test.js
+tests/caseyApiGet.test.js
 tests/caseyApptConfirm.mysql.test.js
 tests/caseyApptConfirm.test.js
 tests/caseyCaseContacts.mysql.test.js
@@ -1432,8 +1442,12 @@ tests/caseySequencePublish.mysql.test.js
 tests/caseySequencePublish.test.js
 tests/caseySequenceStep.mysql.test.js
 tests/caseySequenceStep.test.js
+tests/caseySqlRead.mysql.test.js
+tests/caseySqlRead.test.js
 tests/caseySyncRoots.mysql.test.js
 tests/caseySyncRoots.test.js
+tests/caseyTools.test.js
+tests/caseyToolsRoute.test.js
 tests/caseyWorkflowDraft.test.js
 tests/caseyWorkflowPublish.test.js
 tests/caseyWorkflowQueryWebhook.test.js

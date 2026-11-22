@@ -1,9 +1,19 @@
 // routes/api.casey.js — Casey v2 (ref/CASEY_V2_DESIGN.md).
 //
 // S0: one SU-only inspection read over the route catalog.
+// S1: the tool layer (services/casey/tools) behind an SU-only TEST route —
+//     no model call, nothing user-visible, dark while casey_v2_enabled = '0'.
 //
 //   GET /api/casey/catalog?family=&class=&tier=&method=&q=&unknown=1
 //     → { status:'success', summary, filters, rows:[...], unknown:[...] }
+//   GET  /api/casey/tools            → { status, enabled, tools:[{name, description, input_schema}] }
+//   POST /api/casey/tools/:name {input}
+//     → the tool's envelope (services/casey/tools/index.js), run AS THE CALLER:
+//       ctx comes from this request (its auth, headers, app, ip), so a tool
+//       sees exactly what the superuser testing it may see. 403 when
+//       casey_v2_enabled is '0' (lib/firmConfig; on unless '0', like every
+//       casey_* switch — Fred seeds '0' before the deploy so v2 starts dark),
+//       404 for an unknown tool name, 400 for a non-object input.
 //
 // `rows` are lib/routeCatalog.js rows for THIS instance's live app (req.app),
 // built once per process. Filters are exact matches (family '/api/mail',
@@ -28,6 +38,10 @@ const { superuserOnlyFor } = require('../lib/auth.superuser');
 const catalog = require('../lib/routeCatalog');
 
 const guard = superuserOnlyFor('casey');
+
+function v2Enabled() {
+  return require('../lib/firmConfig').cfg('casey_v2_enabled') !== '0'; // lazy require (convention)
+}
 
 router.get('/api/casey/catalog', ...guard, (req, res) => {
   try {
@@ -62,6 +76,33 @@ router.get('/api/casey/catalog', ...guard, (req, res) => {
   } catch (err) {
     console.error('[api.casey] catalog error:', err);
     res.status(500).json({ status: 'error', message: 'Catalog request failed' });
+  }
+});
+
+// ── S1: tool layer test route ─────────────────────────────────────────────
+router.get('/api/casey/tools', ...guard, (req, res) => {
+  const tools = require('../services/casey/tools'); // lazy require (convention)
+  res.json({ status: 'success', enabled: v2Enabled(), tools: tools.definitions() });
+});
+
+router.post('/api/casey/tools/:name', ...guard, async (req, res) => {
+  try {
+    if (!v2Enabled()) {
+      return res.status(403).json({ status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' });
+    }
+    const tools = require('../services/casey/tools'); // lazy require (convention)
+    const input = req.body && req.body.input;
+    if (input !== undefined && (input === null || typeof input !== 'object' || Array.isArray(input))) {
+      return res.status(400).json({ status: 'error', message: 'input must be an object' });
+    }
+    const out = await tools.runTool(req.params.name, tools.ctxFromRequest(req, 'tool-test'), input || {});
+    if (!out.ok && out.error && out.error.code === 'UNKNOWN_TOOL') {
+      return res.status(404).json({ status: 'error', message: out.error.message });
+    }
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    console.error('[api.casey] tool run error:', err);
+    res.status(500).json({ status: 'error', message: 'Tool run failed' });
   }
 });
 

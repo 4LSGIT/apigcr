@@ -2725,3 +2725,17 @@ edge; position-only loss, accepted.
   `/db`, `/db64` and `/unplacehold` still write it (Pabbly Connect, monthly);
   drop it with those. The `/db-jwt` rule in `lib/caseySensitivity.js` stays so
   a resurrection is born closed.
+- **Mounted sub-routers are not modelled by `routeCatalog.findRoute`** (S1,
+  2026-11-22): a row under a mounted router never matches a concrete path
+  (fail closed — `api_get` says `no GET route`), because the prefix read above
+  is best-effort and Express matches a mount case-insensitively. The day a
+  `routes/` file mounts under a prefix, model the mount (its own regexp from
+  `layer.regexp`, applied before the route's) and add the probe to
+  `tests/caseyTools.test.js`'s mounted-router case.
+- **`sql_read` and logged message text** (S1 review, 2026-11-22). `log.log_data`
+  is a report-manifest column and carries the text of logged SMS and emails, so
+  §4.1/§8.5's "no mail or phone content in the report pool" holds for the
+  content TABLES only — the same exposure v1's `sql.read` has today, for every
+  staff user. Decide in S2 whether `sql_read` applies the channel grant
+  (`comms.read_all`) to `log_data` reads (a denied-name rule keyed on the
+  caller's capabilities), or whether the manifest drops the column.
