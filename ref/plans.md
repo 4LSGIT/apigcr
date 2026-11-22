@@ -2717,8 +2717,11 @@ edge; position-only loss, accepted.
   both `ref/routes.md` and the Casey catalog carry wrong paths. Fix both at
   once (unescape `\/` in the source, or read `layer.path` where Express sets
   it) and add a probe router to `tests/routeCatalog.test.js`.
-- **`GET /db-jwt` (routes/db.jwt.js) runs arbitrary SQL, writes included, on
-  the MAIN pool behind any staff JWT or machine key** — the SU DB console
-  without the SU check, elevation or `admin_audit_log`. Found by the S0 review;
-  Casey never reaches it (never-proposable), every staff login does. Awaiting
-  Fred's ruling: retire, or gate `superuserOnlyFor`.
+- **`GET /db-jwt` RETIRED 2026-11-22** (Fred: trap, check callers, delete after
+  30 quiet days). It ran arbitrary SQL, writes included, on the MAIN pool behind
+  any staff JWT or machine key. Callers checked in both logs: last call
+  2026-07-08 (two staff browsers; no machine key in 120 days), so the window had
+  passed and the route was deleted outright. `query_log` stays — the trapped
+  `/db`, `/db64` and `/unplacehold` still write it (Pabbly Connect, monthly);
+  drop it with those. The `/db-jwt` rule in `lib/caseySensitivity.js` stays so
+  a resurrection is born closed.

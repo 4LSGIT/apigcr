@@ -1,7 +1,7 @@
 // routes/admin.dbConsole.js
 //
-// Super-user-only MySQL console. Replaces /db-jwt for interactive use; /db-jwt
-// remains for backwards compatibility and will be deprecated.
+// Super-user-only MySQL console. Replaced /db-jwt for interactive use; that
+// route was retired 2026-11-22 (arbitrary SQL behind a plain staff JWT).
 //
 // All endpoints require a JWT holding the `su` role (lib/auth.superuser),
 // are rate limited (30/min/user), and every attempt is awaited into

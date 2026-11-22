@@ -823,7 +823,6 @@ routes/campaign.js
 routes/courtPreview.js
 routes/courtReview.js
 routes/ctaActions.js
-routes/db.jwt.js
 routes/db64.js
 routes/dbQuery.js
 routes/decisionActions.js

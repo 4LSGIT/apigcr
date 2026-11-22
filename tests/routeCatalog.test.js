@@ -325,7 +325,7 @@ describe('snapshots — a change here is a deliberate review', () => {
   test('closed staff GETs (not auto, not a card) — credential-returning reads and plumbing', () => {
     expect(rows.filter(r => STAFF.has(r.authClass) && r.authClass !== 'su' && r.method === 'GET' && !r.autoGet).map(at)).toEqual([
       'GET /api/assistant/chats', 'GET /api/assistant/chats/:id(\\d+)', 'GET /api/credentials', 'GET /api/email-credentials',
-      'GET /api/hooks', 'GET /api/hooks/:id', 'GET /api/impersonation/users', 'GET /auth/validate', 'GET /clio-code', 'GET /db-jwt',
+      'GET /api/hooks', 'GET /api/hooks/:id', 'GET /api/impersonation/users', 'GET /auth/validate', 'GET /clio-code',
       'GET /internal/email-test/credentials', 'GET /internal/email-test/credentials/oauth',
     ]);
     for (const r of rows.filter(r => STAFF.has(r.authClass) && r.authClass !== 'su' && r.method === 'GET' && !r.autoGet)) expect(r.proposable).toBe(false);
@@ -399,7 +399,7 @@ describe('snapshots — a change here is a deliberate review', () => {
   });
 
   test('backstop: no auto-GET handler decrypts a secret or forwards request text as SQL', () => {
-    // What a path cannot show (review 2026-11-22: /db-jwt ran req.query as SQL,
+    // What a path cannot show (review 2026-11-22: /db-jwt — retired the same day — ran req.query as SQL,
     // /api/hooks returned decrypted auth, /clio-code the live login code).
     const TOKENS = ['withReadableAuth', 'decrypt(', 'decryptSecret', 'revealSecret', 'clio_login_code',
       '.query(trimmed', 'db.query(req.query', 'sendSms(', 'sendEmail(', 'sendMail(', 'sendMessage('];
@@ -409,8 +409,14 @@ describe('snapshots — a change here is a deliberate review', () => {
       for (const t of TOKENS) if (src.includes(t)) offenders.push(`${at(r)} — ${t}`);
     }
     expect(offenders).toEqual([]);
-    // and the scan is live: the closed routes DO carry the tokens
-    expect(byKey.get('GET /db-jwt').handler.toString()).toContain('.query(trimmed');
+    // and the scan is live: the closed routes DO carry the tokens (the retired
+    // /db-jwt's shape stands in as a synthetic row)
+    const r = express.Router();
+    r.get('/sql-forwarder', jwtOrApiKey, async (req, res) => { const trimmed = String(req.query.query); res.json(await req.db.query(trimmed)); });
+    const a = express(); a.use(r);
+    const synth = catalog.buildCatalog(a).rows[0];
+    expect(synth.autoGet).toBe(true);
+    expect(TOKENS.filter(t => synth.handler.toString().includes(t))).toEqual(['.query(trimmed']);
     expect(byKey.get('GET /api/hooks').handler.toString()).toContain('withReadableAuth');
     expect(byKey.get('GET /clio-code').handler.toString()).toContain('clio_login_code');
   });

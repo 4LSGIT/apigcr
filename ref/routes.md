@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-22T03:31:59.662Z_  
-_869 routes total — DELETE: 72, GET: 355, PATCH: 61, POST: 337, PUT: 41, _ALL: 3_
+_Generated 2026-11-22T04:28:22.648Z_  
+_868 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 337, PUT: 41, _ALL: 3_
 
 ## Global middleware chain
 
@@ -825,12 +825,6 @@ _869 routes total — DELETE: 72, GET: 355, PATCH: 61, POST: 337, PUT: 41, _ALL:
 |--------|------|-------------|---------|
 | GET | `/db` | `<anonymous>` | — |
 
-## /db-jwt
-
-| Method | Path | Middlewares | Handler |
-|--------|------|-------------|---------|
-| GET | `/db-jwt` | `jwtOrApiKey` | — |
-
 ## /db64
 
 | Method | Path | Middlewares | Handler |
@@ -1149,4 +1143,4 @@ _869 routes total — DELETE: 72, GET: 355, PATCH: 61, POST: 337, PUT: 41, _ALL:
 
 ---
 
-_869 routes total — DELETE: 72, GET: 355, PATCH: 61, POST: 337, PUT: 41, _ALL: 3_
+_868 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 337, PUT: 41, _ALL: 3_

@@ -1,7 +1,7 @@
 # DB Console (SU)
 
 An interactive MySQL console against the live database, for super-users. It
-replaces the old `/db-jwt` tool for interactive use.
+replaced the old `/db-jwt` route (retired 2026-11-22) for interactive use.
 
 **Where:** Admin → **DB Console**. SU only.
 
