@@ -55,6 +55,7 @@ const EDITOR_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycLayoutEditor.js'
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
 const { launcher: VL, registry: REG, layouts: LAY } = loadLauncher(RAW);
 const EXTRAS = ['myTasks', 'logout', 'code'];   // casey: placed on More Features' icon row (a firm page since C4)
+const MORE_ACTIONS = ['adminCaseyNotes', ...EXTRAS];   // S4a: Casey Notes (gated system.settings) is an extra too until the firm's Admin page places it — listed for it / su only, so a staff user's More actions is still EXTRAS
 
 function slice(from, to) {
   const a = RAW.indexOf(from);
@@ -328,7 +329,7 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
   test('the effective registry: group More actions, after the sidebar sections, before the firm\'s pages, in registry order', () => {
     const eff = VL.computeEffective(HUBS);
     expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);   // no Firm: both page items sit in Settings (L3)
-    expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(EXTRAS);
+    expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(MORE_ACTIONS);
     const nonAdmin = VL.computeEffective({ isAdmin: false, roles: ['staff'], ui: HUBS.ui });
     expect(ids(nonAdmin.filter((e) => e.group === 'More actions'))).toEqual(EXTRAS);   // not admin-gated
     // a firm with no pages: every hub item is unplaced, so it joins them (registry order)
@@ -348,7 +349,7 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
     expect(ids(eff({ roles: ['staff'], isAdmin: false, ui: ui({ ro: { visible_to: { casey: ['attorney'] } } }) }))).not.toContain('casey');
     expect(ids(eff({ roles: ['attorney'], isAdmin: false, ui: ui({ ro: { visible_to: { casey: ['attorney'] } } }) }))).toContain('casey');
     // all three gone: the group has no entries (All draws no heading for it) — the firm's pages place the rest
-    const none = eff({ denied: EXTRAS, roles: ['admin'], ui: HUBS.ui });
+    const none = eff({ denied: MORE_ACTIONS, roles: ['admin'], ui: HUBS.ui });   // the S4a extra denied too (the helper's default isAdmin passes its gate)
     expect(none.filter((x) => x.group === 'More actions')).toEqual([]);
   });
 
@@ -365,13 +366,13 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
     const s = E.session({ stored: null, effective: eff, locked: [], base: J(ctx.window.DEFAULT_LAYOUTS), registry: ctx.window.FEATURE_REGISTRY, groups });
     for (const sf of ['home', 'sidebar']) {
       const g = J(s.candidates(sf)).find((x) => x.group === 'More actions');
-      expect([sf, g && g.items.map((i) => i.id)]).toEqual([sf, EXTRAS]);
+      expect([sf, g && g.items.map((i) => i.id)]).toEqual([sf, MORE_ACTIONS]);
     }
     expect(s.add('home', 'logout')).toBe(true);
     const row = J(s.view('home')).find((r) => r.id === 'logout');
     expect(row && row.kind).toBe('item');
     const sc = E.shortcutSession({ stored: null, effective: eff, registry: ctx.window.FEATURE_REGISTRY, groups, keys: {}, mac: true });
-    expect(J(sc.candidates('')).find((x) => x.group === 'More actions').items.map((i) => i.id)).toEqual(EXTRAS);
+    expect(J(sc.candidates('')).find((x) => x.group === 'More actions').items.map((i) => i.id)).toEqual(MORE_ACTIONS);
   });
 
   describe('exec', () => {

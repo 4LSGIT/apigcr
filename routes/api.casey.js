@@ -26,6 +26,18 @@
 //   POST /api/casey/cards/:id/decline {note?} → { status, declined:true } (409 unless the card is still proposed)
 //   POST /api/casey/turn/resume {chat_id, card_id, context?}
 //                                             → the NDJSON stream of /turn (the turn's user message is the card's outcome)
+// S4a: Casey Notes (services/casey/notes.js) — the pitfalls document the firm
+//     edits to steer Casey without a deploy. Gated by the system.settings
+//     capability (IT and superusers), the same person-only requireAuth the
+//     settings pages use; NOT darkened by the flag (notes are configuration an
+//     admin may prepare while v2 is off). Every /api/casey route is never
+//     proposable, so Casey cannot write its own instructions.
+//
+//   GET  /api/casey/notes                       → { scopes:[current row per scope], families:[…], caps }
+//   GET  /api/casey/notes/versions?scope=       → { versions:[…] } newest first, bodies as lengths
+//   GET  /api/casey/notes/version?scope=&v=     → { version:{…, body} }
+//   PUT  /api/casey/notes {scope, body, edit_note}          → { saved:{…} } (400 caps / scope / note; 409 unchanged)
+//   POST /api/casey/notes/restore {scope, version, edit_note?} → { saved:{…} } (404 no such version)
 //
 //   GET /api/casey/catalog?family=&class=&tier=&method=&q=&unknown=1
 //     → { status:'success', summary, filters, rows:[...], unknown:[...] }
@@ -87,6 +99,7 @@ const catalog = require('../lib/routeCatalog');
 
 const guard = superuserOnlyFor('casey');
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const requireAuth = require('../lib/auth.requireAuth');   // S4a: the notes routes' capability gate
 
 function v2Enabled() {
   return require('../lib/firmConfig').cfg('casey_v2_enabled') !== '0'; // lazy require (convention)
@@ -423,6 +436,58 @@ router.delete('/api/casey/chats/:id', ...staff, async (req, res) => {
     console.error('[api.casey] chat delete error:', err);
     res.status(500).json({ status: 'error', message: 'Chat delete failed' });
   }
+});
+
+// ── S4a: Casey Notes ───────────────────────────────────────────────────────
+const notesEdit = requireAuth({ audience: 'staff', can: 'system.settings' });   // a person holding system.settings (IT, SU); a machine key is refused
+const noteAuthor = (req) => ({ userId: req.auth.userId, username: req.auth.username || String(req.auth.userId) });
+function notesFail(res, err, what) {
+  if (err && Number.isInteger(err.status)) return res.status(err.status).json({ status: 'error', message: err.message });
+  console.error(`[api.casey] notes ${what} error:`, err);
+  return res.status(500).json({ status: 'error', message: `Notes ${what} failed` });
+}
+
+router.get('/api/casey/notes', notesEdit, async (req, res) => {
+  try {
+    const notes = require('../services/casey/notes'); // lazy require (convention)
+    const scopes = await notes.currentRows(req.db);
+    res.json({ status: 'success', scopes, families: notes.familyScopes(req.app), caps: { global: notes.GLOBAL_MAX, family: notes.FAMILY_MAX, edit_note: notes.EDIT_NOTE_MAX } });
+  } catch (err) { notesFail(res, err, 'read'); }
+});
+
+router.get('/api/casey/notes/versions', notesEdit, async (req, res) => {
+  try {
+    const notes = require('../services/casey/notes'); // lazy require (convention)
+    res.json({ status: 'success', versions: await notes.versions(req.db, req.query.scope) });
+  } catch (err) { notesFail(res, err, 'versions'); }
+});
+
+router.get('/api/casey/notes/version', notesEdit, async (req, res) => {
+  try {
+    const notes = require('../services/casey/notes'); // lazy require (convention)
+    const v = await notes.version(req.db, req.query.scope, req.query.v);
+    if (!v) return res.status(404).json({ status: 'error', message: 'No such version' });
+    res.json({ status: 'success', version: v });
+  } catch (err) { notesFail(res, err, 'version'); }
+});
+
+router.put('/api/casey/notes', notesEdit, async (req, res) => {
+  try {
+    const notes = require('../services/casey/notes'); // lazy require (convention)
+    const b = req.body || {};
+    if (typeof b.body !== 'string') return res.status(400).json({ status: 'error', message: 'body must be a string' });
+    const saved = await notes.save(req.db, { scope: b.scope, body: b.body, editNote: b.edit_note, author: noteAuthor(req) });
+    res.json({ status: 'success', saved });
+  } catch (err) { notesFail(res, err, 'save'); }
+});
+
+router.post('/api/casey/notes/restore', notesEdit, async (req, res) => {
+  try {
+    const notes = require('../services/casey/notes'); // lazy require (convention)
+    const b = req.body || {};
+    const saved = await notes.restore(req.db, { scope: b.scope, version: b.version, editNote: b.edit_note, author: noteAuthor(req) });
+    res.json({ status: 'success', saved });
+  } catch (err) { notesFail(res, err, 'restore'); }
 });
 
 module.exports = router;

@@ -2762,6 +2762,14 @@ edge; position-only loss, accepted.
   than substitute the literal. Under a `headers` map only credential-named
   entries are blanked; a header whose name merely contains "key" (an echoed
   `Idempotency-Key`) is blanked too — accepted.
+- **Casey v2 S4a follow-ups** (2026-11-23): the Casey Notes tile is placed on
+  the Admin page by a DATA step (the firm's `firm:admin` page document in
+  `ui_config`, edited in-app — `scripts/caseyS4aAdminTile.snippet.js`, run
+  once after the deploy; the tests pin the tile among the "More actions"
+  extras, which is where it sits until then); a diff view between two versions of a note (the viewer
+  shows one body; a reviewer compares by eye today); notes on `api_get`
+  answers (hits only by design — reopen if a family note is being missed);
+  a token estimate beside the character count.
 - **Casey v2 S3c follow-ups** (2026-11-23): a long chat is REFUSED past
   `MAX_CHAT_CHARS` (start a new one); a summarise-and-continue (compaction
   into a fresh chat seeded with a summary) is the next step if users hit it.

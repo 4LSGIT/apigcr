@@ -97,8 +97,8 @@ const LIVE_VT = { 'firm:admin': ['it', 'admin'] };   // the live firm's rule
 describe('the effective registry (pure)', () => {
   test('non-admin: every placed item (and every S6b extra) once, minus gated', () => {
     const eff = L.computeEffective({ isAdmin: false, ui: FUI() });
-    expect(EXTRAS).toEqual(['myTasks', 'logout', 'code']);
-    const want = [...ALL_LISTED.filter((k) => !GATED.has(k)), ...PAGES];
+    expect(EXTRAS).toEqual(['adminCaseyNotes', 'myTasks', 'logout', 'code']);   // S4a: Casey Notes until the live Admin page places it
+    const want = [...ALL_LISTED.filter((k) => !GATED.has(k)), ...PAGES];   // a gated EXTRA (S4a's adminCaseyNotes) is dropped for a non-holder like a gated tile
     expect(ids(eff).sort()).toEqual(want.sort());
     expect(new Set(ids(eff)).size).toBe(eff.length);
     expect(ids(eff)).not.toContain('adminDbConsole');
@@ -649,7 +649,7 @@ describe('the boot wiring (review fixes): loadFirmData + loadUserContext, extrac
     // it/admin: the Admin page is theirs (visible_to), with the tiles they can use
     expect(t.shown(adminRow(t))).toBe(true);
     expect(eff).toContain('firm:admin');
-    expect(eff.filter((id) => id.startsWith('admin'))).toEqual(['adminEtch', 'adminSharedValues', 'adminUsers']);
+    expect(eff.filter((id) => id.startsWith('admin'))).toEqual(['adminCaseyNotes', 'adminEtch', 'adminSharedValues', 'adminUsers']);   // S4a: Casey Notes (system.settings, which `it` holds) is an extra until the live Admin page places it — extras list first
     t.close();
     // staff: the firm's visible_to leaves them out — no Admin row, no Admin page item
     const s = await luc('staff', [], FUI(LIVE_VT));

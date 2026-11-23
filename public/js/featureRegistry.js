@@ -379,6 +379,15 @@ window.FEATURE_REGISTRY = {
     gate: 'su',
     hoverAnim: 'fa-bounce', styleVars: '--fa-animation-duration:1.2s',
   },
+  // Casey v2 S4a: the pitfalls document (ref/CASEY_V2_DESIGN.md §4.7) — notes
+  // the firm writes that steer Casey without a deploy. Gated like the System
+  // settings it is a kind of (system.settings: IT and superusers), and the
+  // routes (routes/api.casey.js /api/casey/notes) enforce the same capability.
+  adminCaseyNotes: {
+    label: 'Casey Notes', icon: 'clipboard-list', target: 'caseyNotesDiv', group: 'admin',
+    gate: 'system.settings',
+    hoverAnim: 'fa-shake', styleVars: '--fa-animation-duration:1.5s',
+  },
 
   // ── In no default layout: "More actions" (ui-custom S6b) ─────────────────
   // Launcher items for things the shell already does from fixed chrome, and

@@ -297,7 +297,7 @@ describe('Launcher form: grouping and catalog', () => {
     expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);
     expect(titles).toEqual(L.groups().filter((g) => g !== 'Firm' && g !== 'Home'));
     const inGroup = (g) => F.LauncherSection.st.catalog.entries.filter((e) => e.group === g).map((e) => e.id);
-    expect(inGroup('More actions')).toEqual(['myTasks', 'logout', 'code']);
+    expect(inGroup('More actions')).toEqual(['adminCaseyNotes', 'myTasks', 'logout', 'code']);   // S4a: Casey Notes until the Admin page places it
     expect(inGroup('Admin')).toContain('adminDbConsole');
     expect(inGroup('More Features')).toEqual(expect.arrayContaining(['moreReports', 'casey']));
     const all = Object.keys(top.FEATURE_REGISTRY).filter((id) => !top.FEATURE_REGISTRY[id].placeholder);

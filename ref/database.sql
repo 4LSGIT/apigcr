@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-23T12:13:40.028Z
+-- Generated: 2026-11-23T13:53:32.800Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:a5cad4239ffa7a0e2dda8e67c5ed4d4a
+-- Fingerprint: sha256:602ce3a5c42394eb3f9fb0ee432eb293
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -887,6 +887,24 @@ CREATE TABLE `casey_messages` (
   `meta` json DEFAULT NULL COMMENT 'Assistant rows: {ai_call_id, stop_reason, usage, cost_cents, ms, altered?}. User rows carrying tool results: {tool_calls:[{id, name, ok, code, bytes, ms, truncated}], budget_note?}. The user row that opens a turn: {context:{...}} the context block was built from.',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Casey v2 messages (ref/CASEY_V2_DESIGN.md §4.6): the raw Messages API array of one chat, one row per message. Deleting the chat deletes them.';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `casey_notes`
+--
+
+DROP TABLE IF EXISTS `casey_notes`;
+CREATE TABLE `casey_notes` (
+  `id` bigint unsigned NOT NULL,
+  `scope` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'What the note steers: ''global'' (appended to Casey v2''s system prompt on every turn, services/casey/notes.js → lib/caseyPrompt.systemText) or a route family as lib/routeFamilies.familyOf names it (''/api/contacts''), returned with every lookup_routes hit in that family. App-validated.',
+  `version` int unsigned NOT NULL COMMENT '1..n per scope, in save order; the CURRENT note of a scope is its highest version. Rows are never updated or deleted: a restore writes a new version carrying an older body, so every edit — and who made it — stays readable.',
+  `body` mediumtext COLLATE utf8mb4_general_ci NOT NULL COMMENT 'The note''s text as saved (LF line ends, trailing whitespace stripped). Blank = the scope has no note in force. Caps (app-enforced, services/casey/notes.js): 20,000 characters for global, 2,000 for a family — the global body rides in the cached prompt prefix of EVERY turn.',
+  `edit_note` varchar(300) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Why this version was saved, in the editor''s words (required); a restore carries "Restored version N: …".',
+  `author_id` int DEFAULT NULL COMMENT 'users.user who saved it; NULL for the migration''s seed.',
+  `author_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'The author''s username at save time, denormalised so the history reads without a join (''seed'' for the migration''s own version 1).',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC (the pool runs UTC).'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Casey v2 pitfalls document (ref/CASEY_V2_DESIGN.md §4.7): versioned notes the firm edits in Admin → Casey Notes. The global scope is appended to the system prompt (an edit changes prompt_version, so open chats drop their stored thinking once); a family scope rides with lookup_routes hits. Casey itself can never write here (every /api/casey route is never proposable).';
 
 -- --------------------------------------------------------
 
@@ -4813,6 +4831,13 @@ ALTER TABLE `casey_messages`
   ADD UNIQUE KEY `uk_casey_messages_seq` (`chat_id`,`seq`);
 
 --
+-- Indexes for table `casey_notes`
+--
+ALTER TABLE `casey_notes`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_casey_notes_scope_version` (`scope`,`version`);
+
+--
 -- Indexes for table `channel_grants`
 --
 ALTER TABLE `channel_grants`
@@ -6174,6 +6199,12 @@ ALTER TABLE `casey_chats`
 -- AUTO_INCREMENT for table `casey_messages`
 --
 ALTER TABLE `casey_messages`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `casey_notes`
+--
+ALTER TABLE `casey_notes`
   MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --

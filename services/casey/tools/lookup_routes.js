@@ -1,7 +1,11 @@
 // lookup_routes — search the route catalog, judged for THIS user (Casey v2 S1,
 // design §4.2–4.3). Reads lib/routeCatalog in-process: the catalog of the app
 // serving this request. Key, portal and public rows are omitted — a staff
-// JWT cannot call them at all (§8.1).
+// JWT cannot call them at all (§8.1). S4a: the result carries `family_notes`
+// — the firm's note for each family among the RETURNED rows (services/casey/
+// notes.js, ctx.notes — read once per turn by the loop) — once at the top
+// level, never per row: a 2,000-character note on 22 rows would be 44 KB
+// (review S3). The key is absent when no returned family has a note.
 'use strict';
 
 const catalog = require('../../../lib/routeCatalog');
@@ -36,7 +40,7 @@ function judge(row, auth) {
 
 module.exports = {
   name: 'lookup_routes',
-  description: `Search the app's route catalog (every API route, its auth class, capability, sensitivity tier, whether it may be called/proposed) and learn whether the CURRENT user may call each one. Filters: q (substring of the path), family (e.g. /api/cases), method. Returns up to ${MAX} rows; only staff-reachable routes (staff, staff:can, su). Read the handler with read_source to learn its body and response.`,
+  description: `Search the app's route catalog (every API route, its auth class, capability, sensitivity tier, whether it may be called/proposed) and learn whether the CURRENT user may call each one. Filters: q (substring of the path), family (e.g. /api/cases), method. Returns up to ${MAX} rows; only staff-reachable routes (staff, staff:can, su). \`family_notes\` (when present) maps a returned route family to the firm's own guidance for it — follow it. Read the handler with read_source to learn its body and response.`,
   input_schema: {
     type: 'object',
     properties: {
@@ -63,7 +67,10 @@ module.exports = {
       idempotent: !!r.idempotent, multipart: r.multipart,
       you: judge(r, ctx.auth),
     }));
-    return { count: all.length, returned: rows.length, truncated: all.length > rows.length, rows };
+    const fam = (ctx.notes && ctx.notes.families) || {};
+    const familyNotes = {};
+    for (const r of rows) if (fam[r.family] && !familyNotes[r.family]) familyNotes[r.family] = fam[r.family];
+    return { count: all.length, returned: rows.length, truncated: all.length > rows.length, rows, ...(Object.keys(familyNotes).length ? { family_notes: familyNotes } : {}) };
   },
   judge,   // shared with api_write (S3b): the same verdict decides whether a step may go on a card for this user
 };

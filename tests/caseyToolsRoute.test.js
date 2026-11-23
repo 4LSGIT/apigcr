@@ -102,8 +102,9 @@ test('a tool that reads the catalog gets THIS app (req.app): lookup_routes finds
   const r = await call('POST', '/api/casey/tools/lookup_routes', { body: { input: { q: '/api/casey' } } });
   expect(r.body.ok).toBe(true);
   expect(r.body.data.rows.map((x) => `${x.method} ${x.path}`).sort()).toEqual([
-    'DELETE /api/casey/chats/:id', 'GET /api/casey/boot', 'GET /api/casey/cards/:id', 'GET /api/casey/catalog', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/casey/tools',
-    'POST /api/casey/cards/:id/claim', 'POST /api/casey/cards/:id/decline', 'POST /api/casey/cards/:id/settle', 'POST /api/casey/tools/:name', 'POST /api/casey/turn', 'POST /api/casey/turn/resume', 'POST /api/casey/turn/stop']);
+    'DELETE /api/casey/chats/:id', 'GET /api/casey/boot', 'GET /api/casey/cards/:id', 'GET /api/casey/catalog', 'GET /api/casey/chats', 'GET /api/casey/chats/:id',
+    'GET /api/casey/notes', 'GET /api/casey/notes/version', 'GET /api/casey/notes/versions', 'GET /api/casey/tools',
+    'POST /api/casey/cards/:id/claim', 'POST /api/casey/cards/:id/decline', 'POST /api/casey/cards/:id/settle', 'POST /api/casey/notes/restore', 'POST /api/casey/tools/:name', 'POST /api/casey/turn', 'POST /api/casey/turn/resume', 'POST /api/casey/turn/stop', 'PUT /api/casey/notes']);
   // S3a: the catalog and tools routes stay SU (T3); the chat routes are staff (/api/casey/* is never proposable or auto either way).
   expect(r.body.data.rows.filter((x) => /catalog|tools/.test(x.path)).every((x) => x.auth === 'su' && x.tier === 'T3' && x.you.allowed === true)).toBe(true);
   expect(r.body.data.rows.filter((x) => /chats|turn|boot|cards/.test(x.path)).every((x) => x.auth === 'staff' && x.proposable === false && x.auto_get !== true && x.you.allowed === true)).toBe(true);   // auto_get is null on a non-GET; S3b's card routes are staff too, never proposable (Casey does not drive Casey)

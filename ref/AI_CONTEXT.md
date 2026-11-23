@@ -27,6 +27,22 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S4a — Casey Notes, the pitfalls document (11-23):** `casey_notes`
+  (versions per `scope`: `global`, or a route family as `lib/routeFamilies.familyOf`
+  names it; never updated or deleted — a restore is a new version) edited in
+  Admin → Casey Notes (`public/caseyNotes.html`, `/api/casey/notes*`, gate
+  `system.settings`, not darkened by the flag). The GLOBAL note is appended to
+  the system text (`lib/caseyPrompt.systemText(notes)`) and hashed into the
+  chat's `prompt_version` (`signature(tools, notes)`): an edit is a prompt
+  change — open chats drop their stored thinking on their next turn, as
+  after a deploy. A FAMILY note rides as `family_notes` on a `lookup_routes`
+  result, once per returned family (`services/casey/notes.current`, read
+  once per turn, cached 30 s per process). Caps 20,000 / 2,000 characters,
+  checked on the raw length first; the normalisation is linear. A concurrent
+  save is re-run once on ER_LOCK_DEADLOCK (InnoDB's verdict on the waiter).
+  Casey cannot write here (`/api/casey` is never proposable). The Admin tile
+  reaches the firm's page by a data step (`scripts/caseyS4aAdminTile.snippet.js`).
+  Design §9 S4a; manual 08-Admin-Tools/13.
 - **Casey v2 S3c — references, abort on disconnect, size guard (11-23):**
   `services/casey/cardRefs.js`: a WHOLE value `$N.path` in a later step's
   body, or a whole path segment, is filled in at CLAIM from the earlier

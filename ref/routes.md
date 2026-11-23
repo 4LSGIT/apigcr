@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-23T07:20:00.136Z_  
-_881 routes total — DELETE: 73, GET: 359, PATCH: 61, POST: 344, PUT: 41, _ALL: 3_
+_Generated 2026-11-23T13:53:25.071Z_  
+_886 routes total — DELETE: 73, GET: 362, PATCH: 61, POST: 345, PUT: 42, _ALL: 3_
 
 ## Global middleware chain
 
@@ -175,6 +175,11 @@ _881 routes total — DELETE: 73, GET: 359, PATCH: 61, POST: 344, PUT: 41, _ALL:
 | GET | `/api/casey/chats` | `jwtOrApiKey`, `staffOnly` | — |
 | DELETE | `/api/casey/chats/:id` | `jwtOrApiKey`, `staffOnly` | — |
 | GET | `/api/casey/chats/:id` | `jwtOrApiKey`, `staffOnly` | — |
+| GET | `/api/casey/notes` | `staffAuth` | — |
+| PUT | `/api/casey/notes` | `staffAuth` | — |
+| POST | `/api/casey/notes/restore` | `staffAuth` | — |
+| GET | `/api/casey/notes/version` | `staffAuth` | — |
+| GET | `/api/casey/notes/versions` | `staffAuth` | — |
 | GET | `/api/casey/tools` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/casey/tools/:name` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/casey/turn` | `jwtOrApiKey`, `staffOnly` | — |
@@ -1156,4 +1161,4 @@ _881 routes total — DELETE: 73, GET: 359, PATCH: 61, POST: 344, PUT: 41, _ALL:
 
 ---
 
-_881 routes total — DELETE: 73, GET: 359, PATCH: 61, POST: 344, PUT: 41, _ALL: 3_
+_886 routes total — DELETE: 73, GET: 362, PATCH: 61, POST: 345, PUT: 42, _ALL: 3_

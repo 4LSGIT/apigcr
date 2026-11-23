@@ -89,7 +89,8 @@ const EGG_CSS = (() => { const h = STYLES.filter((s) => s.includes('.home-egg-ro
 const HOME_ALL = '<div class="home-egg-row"><button type="button" id="homeAll" class="home-egg" onclick="openMainTab(\'tabAll\')" title="All features" aria-label="All features"><i class="fa-solid fa-table-cells" aria-hidden="true"></i></button></div>';
 const SU_TILES = ['adminReadonlyKeys', 'adminApiKeys', 'adminCtaLinks', 'adminDbConsole', 'adminConnections', 'adminApiTester', 'adminTools',
   'adminScratch', 'adminSystemAlerts', 'adminSupportInbox', 'adminMailboxes'];
-const CAP_TILES = ['adminUsers', 'adminSharedValues'];
+const CAP_TILES = ['adminUsers', 'adminSharedValues', 'adminCaseyNotes'];   // S4a: Casey Notes (system.settings) — registered and gated, but NOT in the frozen Admin layout (HISTORIC is a record): the live page gets it by a data step, the tests list it among the extras
+const UNPLACED = ['adminCaseyNotes'];
 const SURFACES = ['home', 'sidebar', 'homeIcons'];   // the mounted ones; More and Admin are pages (C4)
 const FIRM_URL = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const ui = ({ layout, firm, ro } = {}) => ({ firm: { ...(ro ? { registry_overrides: ro } : {}), ...(firm ? { layout: firm } : {}) }, user: layout ? { layout } : {} });
@@ -109,7 +110,7 @@ describe('1. gates', () => {
     expect(REG.admin).toBeUndefined();                                                     // the hub item is gone (C4)
     expect(Object.keys(HUB_ADMIN).sort()).toEqual(['action', 'icon', 'id', 'label']);       // the page item: no gate (visible_to decides)
     // the classification covers every Admin page tile but Etch
-    expect(hubTiles('firm:admin').filter((k) => k !== 'adminEtch').sort()).toEqual([...SU_TILES, ...CAP_TILES].sort());
+    expect(hubTiles('firm:admin').filter((k) => k !== 'adminEtch').sort()).toEqual([...SU_TILES, ...CAP_TILES].filter((k) => !UNPLACED.includes(k)).sort());
   });
 
   test('the shell\'s CAP_ROOT / ROLE_CAPS are lib/capabilities, verbatim', () => {
@@ -167,6 +168,7 @@ describe('1. gates', () => {
       // staff with the live rule: the page and its row gone; su: every tile drawn, nothing hidden
       t.L.applyAccess({ roles: ['staff'] });
       expect([t.pageOf('firm:admin'), t.d.querySelector('#appSidebar .sb-item[data-yc-shortcut="firm:admin"]')]).toEqual([null, null]);
+
       t.L.applyAccess({ roles: ['su'] });
       expect(t.d.querySelectorAll('#ycPages [data-yc-denied], #appSidebar [data-yc-denied]')).toHaveLength(0);
       expect(tiles().filter((b) => t.shown(b)).map((b) => b.getAttribute('data-yc-shortcut'))).toEqual(hubTiles('firm:admin'));
@@ -182,6 +184,11 @@ describe('1. gates', () => {
     expect(ids(VL.computeEffective({ isAdmin: false, roles: ['staff'], ui: hub() }))).not.toContain('firm:admin');
     const it = VL.computeEffective({ isAdmin: false, roles: ['it'], ui: hub() });
     expect(ids(it)).toContain('firm:admin');
+    // S4a: the unplaced Casey Notes extra follows its gate in the effective registry (so the palette never offers it to staff): it and su list it, staff and admin do not
+    expect(ids(it)).toContain('adminCaseyNotes');
+    expect(ids(VL.computeEffective({ isAdmin: false, roles: ['su'], ui: hub() }))).toContain('adminCaseyNotes');
+    expect(ids(staff)).not.toContain('adminCaseyNotes');
+    expect(ids(VL.computeEffective({ isAdmin: false, roles: ['admin'], ui: hub({ visibleTo: null }) }))).not.toContain('adminCaseyNotes');
     expect(ids(it.filter((e) => e.group === 'Admin'))).toEqual(['adminEtch', 'adminSharedValues', 'adminUsers']);
     expect(ids(VL.computeEffective({ isAdmin: false, roles: ['su'], ui: hub() }).filter((e) => e.group === 'Admin'))).toEqual(hubTiles('firm:admin'));
   });
@@ -226,7 +233,7 @@ describe('2. icon rows: the surfaces and their markup', () => {
 
   test('the effective registry: casey is placed (group More Features, after its grid); all is placed (group Settings, the sidebar wins); the extras are myTasks, logout and code', () => {
     const eff = VL.computeEffective({ ...SU, ui: hub() });
-    expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(['myTasks', 'logout', 'code']);
+    expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(['adminCaseyNotes', 'myTasks', 'logout', 'code']);   // S4a: Casey Notes until the live Admin page places it (a data step)
     expect(ids(eff.filter((e) => e.group === 'More Features'))).toEqual([...hubTiles('firm:more'), 'casey']);
     expect(eff.find((e) => e.id === 'all').group).toBe('Settings');
     expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);   // no Firm: both page items sit in Settings (L3)
@@ -236,7 +243,7 @@ describe('2. icon rows: the surfaces and their markup', () => {
     const e2 = VL.computeEffective({ ...SU, ui: hub({ layout: { pages: { 'firm:admin': { ...pages['firm:admin'], icons: [{ item: 'myTasks' }] } } } }) }, REG, lay);
     expect(e2.find((e) => e.id === 'myTasks').group).toBe('Admin');
     expect(e2.find((e) => e.id === 'logout').group).toBe('Home');
-    expect(ids(e2.filter((e) => e.group === 'More actions'))).toEqual(['code']);
+    expect(ids(e2.filter((e) => e.group === 'More actions'))).toEqual(['adminCaseyNotes', 'code']);   // S4a: the unplaced tile
   });
 });
 

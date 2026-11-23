@@ -313,7 +313,7 @@ describe('snapshots — a change here is a deliberate review', () => {
       'POST /api/ai/file', 'POST /api/api-keys', 'POST /api/api-keys/rotate-internal', 'POST /api/assistant/actions/:draftId/claim', 'POST /api/assistant/actions/:draftId/result', 'POST /api/assistant/actions/reconcile',
       'POST /api/assistant/chats', 'DELETE /api/assistant/chats/:id(\\d+)', 'PATCH /api/assistant/chats/:id(\\d+)', 'POST /api/assistant/chats/:id(\\d+)/messages',
       'POST /api/assistant/execute', 'POST /api/assistant/plan', 'POST /api/auth/change-password', 'POST /api/auth/update-profile',
-      'POST /api/casey/cards/:id/claim', 'POST /api/casey/cards/:id/decline', 'POST /api/casey/cards/:id/settle', 'DELETE /api/casey/chats/:id', 'POST /api/casey/tools/:name', 'POST /api/casey/turn', 'POST /api/casey/turn/resume', 'POST /api/casey/turn/stop',
+      'POST /api/casey/cards/:id/claim', 'POST /api/casey/cards/:id/decline', 'POST /api/casey/cards/:id/settle', 'DELETE /api/casey/chats/:id', 'PUT /api/casey/notes', 'POST /api/casey/notes/restore', 'POST /api/casey/tools/:name', 'POST /api/casey/turn', 'POST /api/casey/turn/resume', 'POST /api/casey/turn/stop',
       'POST /api/esign/:id/resend', 'POST /api/esign/:id/satisfied-external', 'POST /api/esign/send', 'POST /api/esign/templates/:id/pdf', 'POST /api/hooks/:id/duplicate',
       'POST /api/impersonation/exit', 'POST /api/impersonation/mode', 'POST /api/impersonation/users/:id/start', 'POST /api/pdf/parse',
       'POST /api/readonly-keys', 'POST /internal/dropbox/create-folder', 'POST /internal/email-test/send', 'POST /internal/email/send', 'POST /internal/hook-replay',
@@ -325,7 +325,7 @@ describe('snapshots — a change here is a deliberate review', () => {
 
   test('closed staff GETs (not auto, not a card) — credential-returning reads and plumbing', () => {
     expect(rows.filter(r => STAFF.has(r.authClass) && r.authClass !== 'su' && r.method === 'GET' && !r.autoGet).map(at)).toEqual([
-      'GET /api/assistant/chats', 'GET /api/assistant/chats/:id(\\d+)', 'GET /api/casey/boot', 'GET /api/casey/cards/:id', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/comms-archive/media/:id/url', 'GET /api/credentials', 'GET /api/email-credentials',
+      'GET /api/assistant/chats', 'GET /api/assistant/chats/:id(\\d+)', 'GET /api/casey/boot', 'GET /api/casey/cards/:id', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/casey/notes', 'GET /api/casey/notes/version', 'GET /api/casey/notes/versions', 'GET /api/comms-archive/media/:id/url', 'GET /api/credentials', 'GET /api/email-credentials',
       'GET /api/hooks', 'GET /api/hooks/:hookId/targets', 'GET /api/hooks/:id', 'GET /api/hooks/executions/:id', 'GET /api/impersonation/users', 'GET /auth/validate', 'GET /clio-code',
       'GET /internal/email-test/credentials', 'GET /internal/email-test/credentials/oauth',
     ]);

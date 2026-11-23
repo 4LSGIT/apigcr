@@ -63,9 +63,14 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const CRED_ROW = { id: 12, name: 'Claude', type: 'api_key', config: JSON.stringify({ header: 'x-api-key', key: 'test-key' }), allowed_urls: null, access_token: null, oauth_status: null, verbose: 0 };
 const spendState = { cap: null, spent: 0 };
 const aiRows = [];
+const { makeNotesDb } = require('./helpers/caseyNotesDb');
+const notesDb = makeNotesDb([]);   // S4a: an in-memory casey_notes behind the stub (the loop's read and the notes routes' writes)
+const mockNotes = { get rows() { return notesDb.rows; } };
 const dbStub = {
+  withTransaction: notesDb.withTransaction,
   query: async (sql, params) => {
     if (/FROM credentials/i.test(sql)) return [[CRED_ROW]];
+    if (/casey_notes/i.test(sql)) return notesDb.answer(sql, params);   // S4a: the firm's notes
     if (/INSERT INTO ai_calls/i.test(sql)) { aiRows.push(params); return [{ insertId: aiRows.length }]; }
     if (/FROM app_settings/i.test(sql)) return [spendState.cap == null ? [] : [{ key: 'assistant_ai_monthly_cap_cents', value: spendState.cap }]];
     if (/SUM\(cost_cents\)/i.test(sql)) return [[{ c: spendState.spent }]];
@@ -514,4 +519,75 @@ test('S3c a client disconnect mid-turn asks the turn to stop (the Stop button\'s
   const big = await turn({ text: 'more', chat_id: 1 });
   expect(big).toMatchObject({ status: 409, body: { status: 'error', message: expect.stringMatching(/too long to continue/) } });
   expect(mockStore.chats.get(1).running_since).toBeNull();
+});
+
+// ── S4a: Casey Notes routes ──────────────────────────────────────────────────
+test('S4a notes routes: gated by system.settings (SU and `it` in; admin, staff, a machine key and no token out), not darkened by the flag', async () => {
+  const notesSvc = require('../services/casey/notes');
+  notesDb.rows.length = 0; notesSvc.clearCache();
+  const it = jwt.sign({ sub: 11, username: 'itty', user_auth: 'authorized', roles: ['it'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
+  const admin = jwt.sign({ sub: 7, username: 'rena', user_auth: 'authorized', roles: ['admin'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
+  const plain = jwt.sign({ sub: 9, username: 'other', user_auth: 'authorized', roles: ['staff'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
+  for (const [who, token] of [['su', su], ['it', it]]) {
+    const r = await call('GET', '/api/casey/notes', { token, elevate: false });
+    expect([who, r.status]).toEqual([who, 200]);
+    expect(r.body).toMatchObject({ status: 'success', scopes: [], caps: { global: 20000, family: 2000, edit_note: 300 } });
+    expect(r.body.families).toEqual(expect.arrayContaining(['/api/casey']));
+    expect(r.body.families).toEqual([...r.body.families].sort());
+  }
+  for (const [who, token] of [['admin', admin], ['staff', plain], ['none', null]]) {
+    for (const [m, p, body] of [['GET', '/api/casey/notes'], ['GET', '/api/casey/notes/versions?scope=global'], ['GET', '/api/casey/notes/version?scope=global&v=1'], ['PUT', '/api/casey/notes', { scope: 'global', body: 'x', edit_note: 'n' }], ['POST', '/api/casey/notes/restore', { scope: 'global', version: 1 }]]) {
+      const r = await call(m, p, { token, elevate: false, body });
+      expect([who, m, p, r.status]).toEqual([who, m, p, token ? 403 : 401]);
+    }
+  }
+  // a machine key (x-api-key) is not a person: 401 on every notes route (requireAuth without allowApiKey)
+  for (const [m, p, body] of [['GET', '/api/casey/notes'], ['PUT', '/api/casey/notes', { scope: 'global', body: 'x', edit_note: 'n' }]]) {
+    const r = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: p, method: m, headers: { 'content-type': 'application/json', 'x-api-key': 'yci_' + 'A'.repeat(22) } }, (res) => { let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => resolve({ status: res.statusCode, body: d })); });
+      req.on('error', reject); req.end(body ? JSON.stringify(body) : undefined);
+    });
+    expect([m, r.status]).toEqual([m, 401]);
+  }
+  // the flag off: the notes still answer (configuration, not Casey)
+  flags.v2 = '0';
+  try { expect((await call('GET', '/api/casey/notes', { elevate: false })).status).toBe(200); } finally { flags.v2 = null; }
+  expect(notesDb.rows).toHaveLength(0);
+});
+
+test('S4a notes routes: the version flow — PUT a new version (400s: body type, unknown scope, over the cap, no edit note; 409 unchanged), the list, one version, restore (404 missing)', async () => {
+  const notesSvc = require('../services/casey/notes');
+  notesDb.rows.length = 0; notesSvc.clearCache();
+  const put = (body) => call('PUT', '/api/casey/notes', { elevate: false, body });
+  expect((await put({ scope: 'global', body: 7, edit_note: 'n' })).status).toBe(400);
+  expect((await put({ scope: 'nope', body: 'x', edit_note: 'n' })).status).toBe(400);
+  expect((await put({ scope: '/api/tasks', body: 'x'.repeat(2001), edit_note: 'n' })).status).toBe(400);
+  expect((await put({ scope: 'global', body: 'x', edit_note: ' ' })).status).toBe(400);
+  const v1 = await put({ scope: 'global', body: 'Be brief.\r\n', edit_note: 'first' });
+  expect(v1.status).toBe(200);
+  expect(v1.body.saved).toMatchObject({ scope: 'global', version: 1, body: 'Be brief.', edit_note: 'first', author_id: 6, author_name: 'IT' });
+  expect((await put({ scope: 'global', body: 'Be brief.', edit_note: 'again' })).status).toBe(409);
+  const v2 = await put({ scope: 'global', body: 'Be brief. Cite tables.', edit_note: 'second' });
+  expect(v2.body.saved.version).toBe(2);
+  const list = await call('GET', '/api/casey/notes', { elevate: false });
+  expect(list.body.scopes.map((s) => [s.scope, s.version, s.body])).toEqual([['global', 2, 'Be brief. Cite tables.']]);
+  const vs = await call('GET', '/api/casey/notes/versions?scope=global', { elevate: false });
+  expect(vs.body.versions.map((v) => [v.version, v.chars, v.edit_note])).toEqual([[2, 22, 'second'], [1, 9, 'first']]);
+  expect((await call('GET', '/api/casey/notes/versions?scope=bogus', { elevate: false })).status).toBe(400);
+  const one = await call('GET', '/api/casey/notes/version?scope=global&v=1', { elevate: false });
+  expect(one.body.version).toMatchObject({ version: 1, body: 'Be brief.' });
+  expect((await call('GET', '/api/casey/notes/version?scope=global&v=9', { elevate: false })).status).toBe(404);
+  const re = await call('POST', '/api/casey/notes/restore', { elevate: false, body: { scope: 'global', version: 1, edit_note: 'v2 was wrong' } });
+  expect(re.status).toBe(200);
+  expect(re.body.saved).toMatchObject({ version: 3, body: 'Be brief.', edit_note: 'Restored version 1: v2 was wrong' });
+  expect((await call('POST', '/api/casey/notes/restore', { elevate: false, body: { scope: 'global', version: 9 } })).status).toBe(404);
+  // The next turn runs under the restored note: the chat line's prompt_version carries it.
+  const tools = require('../services/casey/tools');
+  const prompt = require('../lib/caseyPrompt');
+  const defs = tools.definitions();
+  apiScript = [streamResponse(sse([{ type: 'text', text: 'ok' }], 'end_turn'))];
+  const r = await call('POST', '/api/casey/turn', { body: { text: 'hi' } });
+  expect(r.lines[0].prompt_version).toBe(prompt.signature(defs, { global: 'Be brief.' }));
+  expect(r.lines[0].prompt_version).not.toBe(prompt.signature(defs));
+  notesDb.rows.length = 0; notesSvc.clearCache();
 });

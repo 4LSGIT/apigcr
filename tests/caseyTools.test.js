@@ -226,9 +226,23 @@ describe('lookup_routes', () => {
     const pub = await tools.runTool('lookup_routes', ctx(STAFF), { q: '/api/version' });
     expect(pub.data.count).toBe(0);
   });
+  test('S4a: `family_notes` carries the firm\'s note ONCE per returned family (never per row); absent without one', async () => {
+    const notes = { global: 'ignored here', families: { '/api/tasks': 'Use the dedicated routes; PATCH refuses title.', '/api/casey': 'closed to cards' } };
+    const r = await tools.runTool('lookup_routes', ctx(STAFF, { notes }), { family: '/api/tasks', limit: 3 });
+    expect(r.data.rows.length).toBeGreaterThan(1);
+    expect(r.data.family_notes).toEqual({ '/api/tasks': 'Use the dedicated routes; PATCH refuses title.' });   // not /api/casey: not among the returned rows
+    for (const row of r.data.rows) expect(Object.keys(row)).not.toContain('note');
+    expect(JSON.stringify(r.data).split('PATCH refuses title.').length).toBe(2);   // once
+    const mixed = await tools.runTool('lookup_routes', ctx(STAFF, { notes }), { q: '/api/', limit: 40 });
+    expect(Object.keys(mixed.data.family_notes || {}).every((f) => mixed.data.rows.some((x) => x.family === f))).toBe(true);
+    const other = await tools.runTool('lookup_routes', ctx(STAFF, { notes }), { family: '/api/availability-blocks', limit: 2 });
+    expect(Object.prototype.hasOwnProperty.call(other.data, 'family_notes')).toBe(false);
+    const none = await tools.runTool('lookup_routes', ctx(STAFF), { family: '/api/tasks', limit: 1 });
+    expect(Object.prototype.hasOwnProperty.call(none.data, 'family_notes')).toBe(false);
+  });
   test('filters: q substring, family, method', async () => {
     const r = await tools.runTool('lookup_routes', ctx(STAFF), { q: 'casey', method: 'GET' });
-    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/boot', '/api/casey/cards/:id', '/api/casey/catalog', '/api/casey/chats', '/api/casey/chats/:id', '/api/casey/tools']);
+    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/boot', '/api/casey/cards/:id', '/api/casey/catalog', '/api/casey/chats', '/api/casey/chats/:id', '/api/casey/notes', '/api/casey/notes/version', '/api/casey/notes/versions', '/api/casey/tools']);   // S4a: the three notes reads (staff:can system.settings)
     expect(r.data.rows[0]).toMatchObject({ path: '/api/casey/boot', auth: 'staff', tier: 'T0', proposable: false, auto_get: false });   // S3a: a staff read, still never proposable or auto (/api/casey/*)
     expect(r.data.rows[1]).toMatchObject({ path: '/api/casey/cards/:id', auth: 'staff', tier: 'T0', proposable: false, auto_get: false });   // S3b: the card read, the same closed class
     expect(r.data.rows[2]).toMatchObject({ path: '/api/casey/catalog', auth: 'su', superuser_tool: 'casey', tier: 'T3', proposable: false, auto_get: false });

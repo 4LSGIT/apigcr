@@ -76,6 +76,7 @@ const aiService = require('../aiService');
 const tools = require('./tools');
 const chats = require('./chats');
 const cards = require('./cards');
+const notes = require('./notes');   // S4a: the firm's notes (the global note in the prompt, the family notes on lookup_routes hits)
 const spend = require('./spend');
 const caseyPrompt = require('../../lib/caseyPrompt');
 const { isSuperuser, verifyElevationToken, stepupEnabled } = require('../../lib/auth.superuser');
@@ -258,8 +259,12 @@ async function runTurn(db, {
   if (model != null && !settingModels().includes(model)) throw spend.httpError(400, 'That model is not on the menu');
 
   const defs = tools.definitions();
-  const sig = caseyPrompt.signature(defs);
-  const system = caseyPrompt.systemText();
+  // S4a: the firm's notes (services/casey/notes.js), read once per turn: the
+  // global note is part of the system text and of the signature (an edit is a
+  // prompt change), the family notes ride with lookup_routes hits (ctx.notes).
+  const noteDoc = await notes.current(db);
+  const sig = caseyPrompt.signature(defs, noteDoc);
+  const system = caseyPrompt.systemText(noteDoc);
 
   // ---- The chat: existing (mine, free) or new; claimed before anything streams ----
   let chat;
@@ -314,7 +319,7 @@ async function runTurn(db, {
   let lastSeq = 0;
   let heartbeat = null;
   const via = `casey:c${chat.id}`;
-  const toolCtx = { ...ctx, via };
+  const toolCtx = { ...ctx, via, notes: noteDoc };
   const elapsedS = () => Math.round((Date.now() - started) / 1000);
 
   const fail = (status, message, detail) => { send({ type: 'error', status, message, ...(detail ? { detail } : {}) }); return { ok: false, error: { status, message, detail } }; };

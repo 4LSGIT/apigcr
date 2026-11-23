@@ -76,12 +76,14 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 
 // ── the db stub: spend reads only (the mockStore is mocked) ───────────────────
 const spendState = { cap: null, spent: 0 };
+const mockNotes = { rows: [] };   // S4a: casey_notes current rows ({ scope, version, body }); the service's 30 s cache is cleared where a test changes them
 const CRED_ROW = { id: 12, name: 'Claude', type: 'api_key', config: JSON.stringify({ header: 'x-api-key', key: 'test-key' }), allowed_urls: null, access_token: null, oauth_status: null, verbose: 0 };
 const aiRows = [];
 const db = { query: jest.fn(async (sql, params) => {
   if (/FROM app_settings/i.test(sql)) return [spendState.cap == null ? [] : [{ key: 'assistant_ai_monthly_cap_cents', value: spendState.cap }]];
   if (/SUM\(cost_cents\)/i.test(sql)) return [[{ c: spendState.spent }]];
   if (/FROM credentials/i.test(sql)) return [[CRED_ROW]];                          // the seam test's REAL converse
+  if (/FROM casey_notes/i.test(sql)) return [mockNotes.rows];                      // S4a: the firm's notes, read once per turn (services/casey/notes.current)
   if (/INSERT INTO ai_calls/i.test(sql)) { aiRows.push(params); return [{ insertId: aiRows.length }]; }
   throw new Error(`unexpected sql: ${sql}`);
 }) };
@@ -143,8 +145,65 @@ async function turn(opts) {
 }
 const stored = (id) => mockStore.messages.get(id).map((m) => ({ role: m.role, content: m.content }));
 const sig = () => prompt.signature(tools.definitions());
+const notesSvc = require('../services/casey/notes');
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('S4a: the firm\'s notes', () => {
+  afterEach(() => { mockNotes.rows = []; notesSvc.clearCache(); });
+  test('the global note is in the system text and the signature; the family notes reach lookup_routes; the chat freezes the note-bearing prompt_version', async () => {
+    mockNotes.rows = [{ scope: 'global', version: 2, body: 'Never guess a docket.' }, { scope: '/api/casey', version: 1, body: 'The catalog read is SU only.' }];   // this app mounts the casey routes and the probe only
+    notesSvc.clearCache();
+    const doc = { global: 'Never guess a docket.', families: { '/api/casey': 'The catalog read is SU only.' } };
+    const converse = model([
+      reply([TU('t1', 'lookup_routes', { family: '/api/casey', limit: 1 })], 'tool_use'),
+      reply([T('Done.')]),
+    ]);
+    const { events, res } = await turn({ converse });
+    expect(res.ok).toBe(true);
+    const want = prompt.signature(tools.definitions(), doc);
+    expect(want).not.toBe(sig());
+    expect(events[0].prompt_version).toBe(want);
+    for (const r of converse.requests) {
+      expect(r.system).toBe(prompt.systemText(doc));
+      expect(r.system.endsWith(prompt.NOTES_HEAD + 'Never guess a docket.\n')).toBe(true);
+      expect(r.promptVersion).toBe(want);
+    }
+    const block = stored(1)[2].content[0];   // the tool_result the model got back: the envelope JSON
+    expect(block).toMatchObject({ type: 'tool_result', tool_use_id: 't1' });
+    expect(JSON.parse(block.content).data.family_notes).toEqual({ '/api/casey': 'The catalog read is SU only.' });
+    expect(mockStore.chats.get(1).prompt_version).toBe(want);
+    // The notes were read once for the turn (the service caches; the loop asks once).
+    expect(db.query.mock.calls.filter(([s]) => /FROM casey_notes/.test(s))).toHaveLength(1);
+  });
+  test('an edit of the global note between turns is a prompt change: the stored thinking is dropped and the chat re-stamped (the deploy mechanism)', async () => {
+    mockNotes.rows = [{ scope: 'global', version: 1, body: 'A' }];
+    notesSvc.clearCache();
+    const c1 = model([reply([TH('one'), T('First.')])]);
+    const t1 = await turn({ converse: c1 });
+    const sigA = prompt.signature(tools.definitions(), { global: 'A' });
+    expect(t1.events[0].prompt_version).toBe(sigA);
+    expect(stored(1)[1].content[0]).toEqual(TH('one'));
+    mockNotes.rows = [{ scope: 'global', version: 2, body: 'B' }];
+    notesSvc.clearCache();   // the editor's save clears it on its instance; another instance sees the edit within the cache window
+    const c2 = model([reply([T('Second.')])]);
+    const t2 = await turn({ converse: c2, chatId: 1 });
+    const sigB = prompt.signature(tools.definitions(), { global: 'B' });
+    expect(sigB).not.toBe(sigA);
+    expect(t2.events[0].prompt_version).toBe(sigB);
+    const sent = c2.requests[0].messages;
+    expect(sent.some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'thinking'))).toBe(false);   // the old thinking cannot replay against the new prefix
+    expect(c2.requests[0].system).toBe(prompt.systemText({ global: 'B' }));
+    expect(mockStore.chats.get(1).prompt_version).toBe(sigB);
+    expect(mockStore.chats.get(1).thinking_floor_seq).toBeGreaterThan(0);
+  });
+  test('no note: the base text and the plain signature, as before S4a', async () => {
+    const converse = model([reply([T('Hi.')])]);
+    const { events } = await turn({ converse });
+    expect(events[0].prompt_version).toBe(sig());
+    expect(converse.requests[0].system).toBe(prompt.baseText());
+  });
+});
+
 describe('a turn with tools', () => {
   test('runs tool_use blocks as the user, feeds the envelopes back, streams the events, stores exactly what was sent', async () => {
     mockSettings.model = 'claude-sonnet-5-5'; mockSettings.effort = 'low';

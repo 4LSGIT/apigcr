@@ -1,0 +1,3 @@
+These notes are kept by the firm's IT in Admin → Casey Notes. They are short on purpose: the system prompt already carries the schema, the data rules and the pitfalls known at build time; what belongs here is what the firm learns from Casey's chats.
+
+- Tasks: `PATCH /api/tasks/:id` edits a task's fields under their column names — the title is `task_title`; a body key `title` is refused ("updateTask: blocked fields: title"). Completing, deleting, reopening and transferring a task each have their own route under `/api/tasks/:id/…` (`/complete`, `/delete`, `/reopen`, `/transfer`); read the route before proposing a task edit.

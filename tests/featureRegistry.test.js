@@ -110,7 +110,7 @@ describe('the registry data', () => {
     // registry ("More actions") and runs through exec's closed NO_ELEMENT
     // dispatch. That set is deliberate, so it is pinned: a new orphan fails
     // here until it is added on purpose (and to NO_ELEMENT).
-    expect(Object.keys(REG).filter((k) => !placed.has(k) && !hub.has(k))).toEqual(['myTasks', 'logout', 'code']);
+    expect(Object.keys(REG).filter((k) => !placed.has(k) && !hub.has(k))).toEqual(['adminCaseyNotes', 'myTasks', 'logout', 'code']);   // S4a: Casey Notes joins the extras until the firm's Admin page places it (scripts/caseyS4aAdminTile.snippet.js)
     // and nothing new appears only on the firm's data: a new registry item must be placed, or join this list
     expect([...hub].filter((k) => !Object.prototype.hasOwnProperty.call(REG, k)).filter((k) => k !== 'moreFeatures' && k !== 'admin')).toEqual([]);
     for (const k of Object.keys(REG)) expect(k).toMatch(/^[a-z][A-Za-z0-9]*$/);

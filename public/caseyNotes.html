@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Casey Notes</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="/js/diag.js"></script>
+<style>
+  /* Casey v2 S4a — the pitfalls document (ref/CASEY_V2_DESIGN.md §4.7). Palette
+     from /theme.css like the other Admin panes (issueReports.html); the host
+     iframe paints var(--page-bg) during load. */
+  html, body { margin:0; padding:0; height:100%; background:var(--page-bg); color:var(--text);
+    font-family:-apple-system, Segoe UI, Roboto, sans-serif; font-size:13px; }
+  .main { display:flex; flex-direction:column; min-height:100vh; min-width:0; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px; background:var(--surface); border-bottom:1px solid var(--border); }
+  .bar label { color:var(--text-muted, var(--text)); }
+  .bar select { max-width:100%; min-width:0; }
+  .intro { padding:8px 10px 0; color:var(--text-muted, var(--text)); line-height:1.4; }
+  .intro code { font-size:12px; }
+  .editor { display:flex; flex-direction:column; gap:8px; padding:10px; min-width:0; }
+  textarea#body { width:100%; box-sizing:border-box; min-height:40vh; resize:vertical; font:12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; min-width:0; }
+  .row input#editNote { flex:1 1 240px; min-width:0; }
+  .count { color:var(--text-muted, var(--text)); white-space:nowrap; }
+  .count.over { color:var(--danger); font-weight:600; }
+  button { cursor:pointer; }
+  button[disabled] { cursor:default; opacity:.6; }
+  .status { padding:0 10px 8px; min-height:18px; color:var(--text-muted, var(--text)); }
+  .status.err { color:var(--danger); }
+  .status.ok { color:var(--success, var(--text)); }
+  h3 { margin:12px 10px 6px; font-size:13px; }
+  .tablewrap { overflow-x:auto; padding:0 10px 10px; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color:var(--text-muted, var(--text)); font-weight:600; }
+  tr.cur td { background:var(--surface-2); }
+  td.num { white-space:nowrap; }
+  td .act { white-space:nowrap; }
+  td button { font-size:12px; padding:2px 8px; margin-right:4px; }
+  .viewer { margin:0 10px 12px; border:1px solid var(--border); border-radius:6px; background:var(--surface); display:none; min-width:0; }
+  .viewer .vhead { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:6px 8px; border-bottom:1px solid var(--border); min-width:0; }
+  /* The version's meta (time · author · edit note) wraps: an edit note can be 300 characters and the page must never scroll sideways (six-width check, S4a). */
+  .viewer .vhead strong, .viewer .vhead .count { white-space:normal; overflow-wrap:anywhere; min-width:0; }
+  .viewer pre { margin:0; padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; font:12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height:40vh; overflow:auto; }
+  .denied { padding:40px; text-align:center; color:var(--danger); }
+</style>
+</head>
+<body>
+<div class="main" id="main" hidden>
+  <div class="bar">
+    <label for="scope"><i class="fa-solid fa-clipboard-list"></i> Notes for</label>
+    <select id="scope"></select>
+    <button type="button" id="refresh" title="Reload from the server"><i class="fa-solid fa-rotate"></i> Refresh</button>
+  </div>
+  <div class="intro" id="intro"></div>
+  <div class="editor">
+    <textarea id="body" spellcheck="true" aria-label="The note"></textarea>
+    <div class="row">
+      <span class="count" id="count"></span>
+      <input type="text" id="editNote" maxlength="300" placeholder="Edit note — why this change (required)" aria-label="Edit note">
+      <button type="button" id="save" class="good" disabled><i class="fa-solid fa-floppy-disk"></i> Save as a new version</button>
+      <button type="button" id="revert" disabled title="Discard what you typed">Discard</button>
+    </div>
+  </div>
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+  <h3>Versions</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>#</th><th>Saved</th><th>By</th><th>Edit note</th><th>Length</th><th></th></tr></thead>
+      <tbody id="versions"></tbody>
+    </table>
+  </div>
+  <div class="viewer" id="viewer">
+    <div class="vhead"><strong id="vtitle"></strong><span id="vmeta" class="count"></span>
+      <button type="button" id="restore" class="good"><i class="fa-solid fa-clock-rotate-left"></i> Restore this version</button>
+      <button type="button" id="vclose">Close</button></div>
+    <pre id="vbody"></pre>
+  </div>
+</div>
+<script>
+// ── parent-bridge auth (the Admin pane pattern: issueReports.html) ───────────
+const P = window.parent;
+function api(endpoint, method = 'GET', payload = null) {
+  if (!P || !P.apiSend) throw new Error('This page must be loaded inside the admin app.');
+  return P.apiSend(endpoint, method, payload);
+}
+const E = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Cosmetic gate, mirroring the routes' system.settings capability (IT and
+// superusers hold it; the server enforces it — lib/capabilities).
+(function checkAccess() {
+  if (!P || P === window) { document.body.innerHTML = '<div class="denied">Not authenticated.</div>'; return; }
+  const u = P.firmData && P.firmData.currentUser;
+  if (!u) { setTimeout(checkAccess, 100); return; }
+  const roles = String(u.roles || '').split(',').map((r) => r.trim());
+  if (!roles.includes('su') && !roles.includes('it')) { document.body.innerHTML = '<div class="denied">Casey Notes is for IT and superusers (the system.settings capability).</div>'; return; }
+  E('main').hidden = false;
+  wire();
+  setTimeout(boot, 0);
+})();
+
+// ── state ────────────────────────────────────────────────────────────────────
+let data = { scopes: [], families: [], caps: { global: 20000, family: 2000, edit_note: 300 } };
+let scope = 'global';
+let saved = '';          // the current version's body for the selected scope ('' when none)
+let versions = [];
+
+const GLOBAL_INTRO = 'The <b>global</b> note is appended to Casey\'s system prompt on <b>every</b> turn, as instructions from the firm. Keep it short (it costs tokens each time) and concrete: what Casey got wrong, what to do instead. Saving changes the prompt: chats already open drop their stored thinking once on their next turn, and the new note steers that turn.';
+const FAMILY_INTRO = (f) => `A note for the route family <code>${esc(f)}</code>: Casey sees it on every <code>lookup_routes</code> hit under that family (which route to use, what a route refuses) and nowhere else, so it costs nothing until the family is relevant.`;
+
+function capFor(s) { return s === 'global' ? data.caps.global : data.caps.family; }
+function currentRow(s) { return data.scopes.find((r) => r.scope === s) || null; }
+function fmtTs(ts) { if (!ts) return ''; const d = new Date(ts); return isNaN(d) ? String(ts) : d.toLocaleString(); }
+
+function renderScopes() {
+  const sel = E('scope');
+  const opts = [['global', 'Global — every turn']].concat(data.families.map((f) => [f, f]));
+  for (const r of data.scopes) if (r.scope !== 'global' && !data.families.includes(r.scope)) opts.push([r.scope, r.scope + ' (no such family now)']);
+  sel.innerHTML = opts.map(([v, label]) => { const has = currentRow(v) && currentRow(v).body; return `<option value="${esc(v)}">${esc(label)}${has ? ' •' : ''}</option>`; }).join('');
+  sel.value = scope;
+  if (sel.value !== scope) { scope = 'global'; sel.value = scope; }
+}
+function renderEditor() {
+  const row = currentRow(scope);
+  saved = row ? row.body : '';
+  E('body').value = saved;
+  E('editNote').value = '';
+  E('intro').innerHTML = scope === 'global' ? GLOBAL_INTRO : FAMILY_INTRO(scope);
+  syncCount();
+}
+const isDirty = () => E('body').value !== saved;
+function syncCount() {
+  const n = [...E('body').value].length, cap = capFor(scope);   // code points, as the server's CHAR_LENGTH counts
+  const c = E('count');
+  c.textContent = `${n.toLocaleString()} / ${cap.toLocaleString()} characters`;
+  c.classList.toggle('over', n > cap);
+  const dirty = E('body').value !== saved;
+  E('save').disabled = !dirty || n > cap || !E('editNote').value.trim();
+  E('revert').disabled = !dirty;
+}
+function renderVersions() {
+  const tb = E('versions');
+  if (!versions.length) { tb.innerHTML = '<tr><td colspan="6" class="count">No version yet — the note is blank.</td></tr>'; return; }
+  tb.innerHTML = versions.map((v, i) => `<tr class="${i === 0 ? 'cur' : ''}">
+    <td class="num">${v.version}${i === 0 ? ' (current)' : ''}</td><td class="num">${esc(fmtTs(v.created_at))}</td><td>${esc(v.author_name)}</td>
+    <td>${esc(v.edit_note)}</td><td class="num">${Number(v.chars).toLocaleString()}</td>
+    <td class="act"><button type="button" data-view="${v.version}">View</button></td></tr>`).join('');
+}
+function setStatus(text, cls) { const s = E('status'); s.textContent = text || ''; s.className = 'status' + (cls ? ' ' + cls : ''); }
+
+async function load() {
+  const r = await api('/api/casey/notes');
+  data = { scopes: r.scopes || [], families: r.families || [], caps: r.caps || data.caps };
+  renderScopes();
+  renderEditor();
+  await loadVersions();
+}
+let versionsReq = 0;   // a stale answer (a fast scope change) never paints another scope's table
+async function loadVersions() {
+  const mine = ++versionsReq;
+  const r = await api(`/api/casey/notes/versions?scope=${encodeURIComponent(scope)}`);
+  if (mine !== versionsReq) return;
+  versions = r.versions || [];
+  renderVersions();
+  E('viewer').style.display = 'none';
+}
+
+async function boot() {
+  try { await load(); setStatus(''); }
+  catch (e) { setStatus('Could not load the notes: ' + (e && e.message || e), 'err'); }
+}
+
+// The controls are wired only for a user the gate let in (the refusal replaced the body).
+function wire() {
+E('scope').addEventListener('change', async () => {
+  if (isDirty()) {   // unsaved typing is never dropped by a click elsewhere: Save it or Discard it first (review S7)
+    E('scope').value = scope;
+    setStatus('You have unsaved changes to this note — Save or Discard them before switching.', 'err');
+    return;
+  }
+  scope = E('scope').value;
+  renderEditor();
+  try { await loadVersions(); setStatus(''); } catch (e) { setStatus('Could not load the versions: ' + (e && e.message || e), 'err'); }
+});
+E('body').addEventListener('input', syncCount);
+E('editNote').addEventListener('input', syncCount);
+E('revert').addEventListener('click', () => { E('body').value = saved; syncCount(); setStatus(''); });
+E('refresh').addEventListener('click', () => {
+  if (isDirty()) { setStatus('You have unsaved changes to this note — Save or Discard them before refreshing.', 'err'); return; }
+  boot();
+});
+
+E('save').addEventListener('click', async () => {
+  const body = E('body').value, edit_note = E('editNote').value.trim();
+  if (!edit_note) { setStatus('An edit note is required.', 'err'); return; }
+  E('save').disabled = true;
+  setStatus('Saving…');
+  let savedRow;
+  try {
+    savedRow = (await api('/api/casey/notes', 'PUT', { scope, body, edit_note })).saved;
+  } catch (e) {
+    setStatus('Not saved: ' + (e && e.message || e), 'err');
+    syncCount();
+    return;
+  }
+  const done = `Saved version ${savedRow.version} of ${scope}.${scope === 'global' ? ' Casey\'s prompt has changed: chats already open pick it up on their next turn (their stored thinking is dropped for that turn).' : ''}`;
+  setStatus(done, 'ok');
+  try { await load(); setStatus(done, 'ok'); }   // the reload is separate: a save that went through is never reported as "Not saved" (review S8)
+  catch (e) { saved = savedRow.body; E('body').value = saved; syncCount(); setStatus(done + ' The list could not be reloaded: ' + (e && e.message || e), 'err'); }   // the editor shows what was stored (normalised)
+});
+
+E('versions').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('button[data-view]');
+  if (!b) return;
+  const v = Number(b.dataset.view);
+  try {
+    const r = await api(`/api/casey/notes/version?scope=${encodeURIComponent(scope)}&v=${v}`);
+    const row = r.version;
+    E('vtitle').textContent = `Version ${row.version} of ${scope}`;
+    E('vmeta').textContent = `${fmtTs(row.created_at)} · ${row.author_name} · ${row.edit_note}`;
+    E('vbody').textContent = row.body || '(blank)';
+    E('restore').dataset.version = String(row.version);
+    E('restore').disabled = versions.length && versions[0].version === row.version;   // the current one restores nothing
+    E('viewer').style.display = 'block';
+    E('viewer').scrollIntoView({ block: 'nearest' });
+  } catch (e) { setStatus('Could not load that version: ' + (e && e.message || e), 'err'); }
+});
+E('vclose').addEventListener('click', () => { E('viewer').style.display = 'none'; });
+E('restore').addEventListener('click', async () => {
+  if (isDirty()) { setStatus('You have unsaved changes to this note — Save or Discard them before restoring a version.', 'err'); return; }
+  const version = Number(E('restore').dataset.version);
+  E('restore').disabled = true;
+  setStatus(`Restoring version ${version}…`);
+  let savedRow;
+  try {
+    savedRow = (await api('/api/casey/notes/restore', 'POST', { scope, version, edit_note: E('editNote').value.trim() })).saved;
+  } catch (e) { setStatus('Not restored: ' + (e && e.message || e), 'err'); E('restore').disabled = false; return; }
+  const done = `Restored version ${version} as version ${savedRow.version} of ${scope}.`;
+  setStatus(done, 'ok');
+  try { await load(); setStatus(done, 'ok'); }
+  catch (e) { saved = savedRow.body; E('body').value = saved; syncCount(); setStatus(done + ' The list could not be reloaded: ' + (e && e.message || e), 'err'); }
+});
+}
+</script>
+</body>
+</html>

@@ -258,6 +258,7 @@ manual/08-Admin-Tools/09-comms-transcription.md
 manual/08-Admin-Tools/10-comms-archive.md
 manual/08-Admin-Tools/11-tool-actions.md
 manual/08-Admin-Tools/12-shared-values.md
+manual/08-Admin-Tools/13-casey-notes.md
 manual/08-Admin-Tools/README.md
 manual/README.md
 package-lock.json
@@ -321,6 +322,7 @@ public/caseconfig/system.html
 public/caseconfig/types.html
 public/caseerror.html
 public/casey.html
+public/caseyNotes.html
 public/checklistView.html
 public/checklistsView.html
 public/comms.html
@@ -700,6 +702,8 @@ ref/migrations/2026-11-22_casey_v2_chats.sql
 ref/migrations/2026-11-22_casey_v2_s3a_stop.sql
 ref/migrations/2026-11-23_casey_v2_s3b_cards.sql
 ref/migrations/2026-11-23_casey_v2_s3c_sent.sql
+ref/migrations/2026-11-23_casey_v2_s4a_notes.sql
+ref/migrations/2026-11-23_casey_v2_s4a_notes_seed.md
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -898,10 +902,12 @@ scripts/calendarTypeSeed.js
 scripts/caseCaptionBackfill.js
 scripts/caseyP4Idempotency.js
 scripts/caseyP5Ledger.js
+scripts/caseyS4aAdminTile.snippet.js
 scripts/caseyV2ChatsMigrate.js
 scripts/caseyV2S3aMigrate.js
 scripts/caseyV2S3bMigrate.js
 scripts/caseyV2S3cMigrate.js
+scripts/caseyV2S4aMigrate.js
 scripts/cfCourtBackfill.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
@@ -1131,6 +1137,7 @@ services/casey/cardRefs.js
 services/casey/cards.js
 services/casey/chats.js
 services/casey/loop.js
+services/casey/notes.js
 services/casey/spend.js
 services/casey/tools/api_get.js
 services/casey/tools/api_write.js
@@ -1442,6 +1449,9 @@ tests/caseyMailAttachments.test.js
 tests/caseyMailTriage.mysql.test.js
 tests/caseyMailTriage.panes.test.js
 tests/caseyMailTriage.test.js
+tests/caseyNotes.mysql.test.js
+tests/caseyNotes.test.js
+tests/caseyNotesPage.test.js
 tests/caseyPage.test.js
 tests/caseyPipeline.mysql.test.js
 tests/caseyPipeline.test.js
@@ -1766,6 +1776,7 @@ tests/guestCodeLanes.test.js
 tests/helpers/bcPolyfill.js
 tests/helpers/campaignDesignerSmoke.js
 tests/helpers/caseyMemoryCards.js
+tests/helpers/caseyNotesDb.js
 tests/helpers/caseySendProposalDb.js
 tests/helpers/commsArchiveSchema.js
 tests/helpers/consentSchema.js
