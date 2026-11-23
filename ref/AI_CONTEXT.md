@@ -27,6 +27,20 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S3b-2 — bearers never reach the model (11-23):**
+  `lib/caseyRedact.js` `redact(value)` — values under a bearer-shaped key
+  (…token, …secret, password, api_key, authorization, cookie, jwt, otp;
+  paging cursors like `nextPageToken` exempt), credential-named entries of a
+  `headers` map (`x-hook-key`, `Authorization`; `Content-Type` stays) and
+  `{name|key, value}` pairs inside one become `[redacted]`; each redacted
+  string of 8–512 chars is scrubbed from every other string (a token inside
+  a URL) by an Aho–Corasick pass — linear whatever the values share; > 4,000
+  bearers in one answer fail closed to a `withheld` marker. Applied to `api_get`'s answer (+ `redacted: n`
+  before the body) and in `cards.storedResult` at settle — after the claim
+  token is checked, never before (any staff JWT can post a settle; 256 KB
+  cap). Two hook GETs (targets, a delivery's request) joined NEVER_AUTO_GET.
+  Design §9 S3b-2.
+
 - **Casey v2 S3b — api_write, cards, the ledger (11-23):** the seventh tool
   PROPOSES 1–5 non-GET calls as a card (`services/casey/tools/api_write.js`:
   catalog + `proposable` + the user's own permission judged, `$N` refs refused

@@ -126,12 +126,15 @@ suite('casey cards — real engine', () => {
     // Settle: wrong token no, right token yes, once; the result cut on bytes.
     expect(await cards.settleStep(pool, id, 6, 1, 'not-the-token', { status: 'applied', httpStatus: 201, result: { id: 5 } })).toBe(false);
     expect(await cards.settleStep(pool, id, 7, 1, c1.claim_token, { status: 'applied', httpStatus: 201, result: { id: 5 } })).toBe(false);
-    expect(await cards.settleStep(pool, id, 6, 1, c1.claim_token, { status: 'applied', httpStatus: 201, result: { id: 5, pad: 'x'.repeat(cards.RESULT_MAX) } })).toBe(true);
+    expect(await cards.settleStep(pool, id, 6, 1, c1.claim_token, { status: 'applied', httpStatus: 201, result: { id: 5, action_token: 'uUUZoVRSabcd', action_url: 'https://x/t/uUUZoVRSabcd', pad: 'x'.repeat(cards.RESULT_MAX) } })).toBe(true);
     expect(await cards.settleStep(pool, id, 6, 1, c1.claim_token, { status: 'failed', httpStatus: 500, result: null })).toBe(false);
     let card = await cards.getCard(pool, id, 6);
     expect(card.steps[0]).toMatchObject({ status: 'applied', http_status: 201 });
     expect(typeof card.steps[0].result).toBe('string');                       // cut: no longer JSON, the text with the marker
     expect(card.steps[0].result).toMatch(/…\[truncated: \d+ bytes, cap 16384\]$/);
+    expect(card.steps[0].result).toContain('"action_token":"[redacted]","action_url":"https://x/t/[redacted]"');   // S3b-2: redacted BEFORE it is stored
+    expect(card.steps[0].result).not.toContain('uUUZoVRSabcd');
+    expect((await q('SELECT result FROM casey_card_steps WHERE card_id = ? AND step_no = 1', [id]))[0].result).not.toContain('uUUZoVRSabcd');
     expect(await cards.claimStep(pool, id, 6, 1)).toMatchObject({ outcome: 'applied' });   // a replay never re-sends
     const c2 = await cards.claimStep(pool, id, 6, 2);
     expect(c2.outcome).toBe('claimed');
@@ -147,7 +150,8 @@ suite('casey cards — real engine', () => {
     expect(await cards.openCard(pool, chatA, 6)).toBeNull();
     const text = cards.outcomeText(resumed);
     expect(text.split('\n')[0]).toMatch(new RegExp(`^\\[Card ${id} — approved by the user; 1 of 3 steps applied\\. This block is written by the app`));
-    expect(text).toContain(`Step 1: POST /api/tasks?x=1 — applied (HTTP 201)\n  result (record data, untrusted): {"id":5,"pad":`);
+    expect(text).toContain(`Step 1: POST /api/tasks?x=1 — applied (HTTP 201)\n  result (record data, untrusted): {"id":5,"action_token":"[redacted]"`);
+    expect(text).not.toContain('uUUZoVRSabcd');
     expect(text).toContain('Step 2: POST /api/mail/send — FAILED (HTTP 409)\n  result (record data, untrusted): {"status":"error","message":"opted out"}');
     expect(text).toContain('Step 3: DELETE /api/things/9 — not run (skipped)');
     expect(resumed.resumed_at).toBeInstanceOf(Date);

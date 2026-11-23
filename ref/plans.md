@@ -2747,6 +2747,17 @@ edge; position-only loss, accepted.
   for the aiService foundation slice and have no caller. Remove the env var
   from the service and delete the file + its routeCatalog expectations in one
   slice; Fred undecided as of S2.
+- **Casey v2 S3b-2 follow-up** (2026-11-23): `lib/caseyRedact.js` is a
+  KEY-shaped rule (token / secret / password / … as the key's last word), not
+  a content scanner — a bearer handed out under another name (a column
+  called `code`, a `link` carrying a signed URL with no token field beside
+  it) passes. When a route is found answering one, add the word to
+  `BEARER_WORDS` or put the route on `SECRET_RETURNING` / `NEVER_AUTO_GET`
+  (as the two hook GETs were). S3c's `$N.field` substitution reads the
+  ledger: it must REFUSE a field whose stored value is `[redacted]` rather
+  than substitute the literal. Under a `headers` map only credential-named
+  entries are blanked; a header whose name merely contains "key" (an echoed
+  `Idempotency-Key`) is blanked too — accepted.
 - **Casey v2 S3b follow-ups** (2026-11-23): S3c takes `$N.field`
   substitution between a card's steps (api_write refuses a reference today —
   two cards), an abort on client disconnect, and the chat size guard. Optional

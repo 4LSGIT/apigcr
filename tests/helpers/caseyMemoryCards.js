@@ -64,7 +64,7 @@ function make(actual) {
       const c = mine(cardId, userId); if (!c) return false;
       const s = c.steps.find((x) => x.step_no === Number(stepNo));
       if (!s || s.status !== 'claimed' || s.claim_token !== String(claimToken || '')) return false;
-      s.status = status; s.http_status = Number.isInteger(httpStatus) ? httpStatus : null; s.result = actual.resultText(result); s.settled_at = 'now';
+      s.status = status; s.http_status = Number.isInteger(httpStatus) ? httpStatus : null; s.result = actual.storedResult(result); s.settled_at = 'now';   // the real store's own function (review S1: the helper must not re-implement the guard)
       return true;
     },
     async declineCard(db, cardId, userId, note) {

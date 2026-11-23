@@ -757,3 +757,50 @@ test('S3b SF1/N-b/N-d: a successful step announces itself on the parent\'s sync 
   expect([...el3.querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Approve', 'Decline']);
   expect(el3.textContent).not.toMatch(/Not acted on/);
 });
+
+test('S3b-2: a route answer over 200 KB is trimmed by the page before the settle — STRUCTURALLY (keys kept, so the server still redacts a token deep inside), measured in bytes, and only AFTER the sync bus got the whole answer', async () => {
+  const card = CARD({ id: 70, steps: [STEP({ idempotency_key: 'casey:70:1' })] });
+  const sniffed = [];
+  const answerBody = { status: 'success', task: { id: 9, action_token: 'uUUZoVRSabcd', note: 'n'.repeat(5000) }, rows: Array.from({ length: 6000 }, (_, i) => ({ i, pad: 'p'.repeat(40) })) };
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(card), cardsApi: { 70: card }, resume: answer('ok'), routes: { '/api/tasks': () => answerBody } });
+  p.w.__parent.YC = { _sniff: (m, e, b) => sniffed.push(b) };
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  [...p.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(600);
+  expect(sniffed).toHaveLength(1); expect(sniffed[0].rows).toHaveLength(6000);   // the bus got the route's whole answer (review S2)
+  const settle = p.calls.find((c) => /cards\/70\/settle/.test(c.p)).body;
+  expect(settle.status).toBe('applied');
+  expect(settle.result.truncated_by_page).toBe(true);
+  expect(settle.result.result.task.action_token).toBe('uUUZoVRSabcd');          // the key survives: the server's redaction fires on it (review S1)
+  expect(settle.result.result.task.note.endsWith('…[cut]')).toBe(true);
+  expect(settle.result.result.rows.length).toBeLessThanOrEqual(51);
+  expect(String(settle.result.result.rows[settle.result.result.rows.length - 1])).toMatch(/more items cut by the page/);
+  expect(new TextEncoder().encode(JSON.stringify(settle.result)).length).toBeLessThan(150001);
+  // Bytes, not characters: a Hebrew-heavy answer of 110k characters is ~220 KB in bytes — it must be trimmed although its length is under 200,000 (review S3).
+  const he = { status: 'success', lines: Array.from({ length: 1100 }, () => 'שלום עולם '.repeat(10)) };
+  expect(JSON.stringify(he).length).toBeLessThan(200000); expect(new TextEncoder().encode(JSON.stringify(he)).length).toBeGreaterThan(200000);
+  const c2 = CARD({ id: 71, steps: [STEP({ idempotency_key: 'casey:71:1' })] });
+  const p2 = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(c2), cardsApi: { 71: c2 }, resume: answer('ok'), routes: { '/api/tasks': () => he } });
+  p2.E('text').value = 'go'; p2.E('send').click(); await wait(250);
+  [...p2.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(600);
+  const s2 = p2.calls.find((c) => /cards\/71\/settle/.test(c.p)).body;
+  expect(s2.result.truncated_by_page).toBe(true);
+  expect(new TextEncoder().encode(JSON.stringify(s2.result)).length).toBeLessThan(150001);
+  // A small answer goes as it is.
+  const c3 = CARD({ id: 72, steps: [STEP({ idempotency_key: 'casey:72:1' })] });
+  const p3 = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(c3), cardsApi: { 72: c3 }, resume: answer('ok'), routes: { '/api/tasks': () => ({ ok: 1 }) } });
+  p3.E('text').value = 'go'; p3.E('send').click(); await wait(250);
+  [...p3.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(400);
+  expect(p3.calls.find((c) => /cards\/72\/settle/.test(c.p)).body.result).toEqual({ ok: 1 });
+});
+
+test('S3b-2: a route ERROR body over 200 KB is trimmed too, so the failed settle is not refused and the step reads failed, not unknown', async () => {
+  const card = CARD({ id: 73, steps: [STEP({ idempotency_key: 'casey:73:1' })] });
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(card), cardsApi: { 73: card }, resume: answer('ok'), routes: { '/api/tasks': () => ({ __throw: { status: 422, message: 'bad', body: { status: 'error', message: 'bad', details: Array.from({ length: 6000 }, (_, i) => ({ i, pad: 'p'.repeat(40) })) } } }) } });
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  [...p.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(600);
+  const settle = p.calls.find((c) => /cards\/73\/settle/.test(c.p)).body;
+  expect(settle).toMatchObject({ status: 'failed', http_status: 422 });
+  expect(settle.result.truncated_by_page).toBe(true);
+  expect(settle.result.result.message).toBe('bad');
+  expect(new TextEncoder().encode(JSON.stringify(settle.result)).length).toBeLessThan(150001);
+});

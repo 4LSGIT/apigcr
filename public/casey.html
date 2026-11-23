@@ -349,14 +349,16 @@ async function runCard(el, card) {
         if (res === null) settle = { status: 'applied', http_status: 204, result: null };
         else { let text = ''; try { text = await res.text(); } catch (_) {} let result = null; try { result = text ? JSON.parse(text) : null; } catch (_) { result = text; } settle = { status: 'applied', http_status: res.status, result }; }
         // The sync bus (public/js/yc-sync.js): apiSend's 'response' path returns BEFORE the shell's own sniff, so a card's
-        // write would be silent to the case or contact page beside this pane — announce it here, as the shell would have.
+        // write would be silent to the case or contact page beside this pane — announce it here, as the shell would have,
+        // with the route's WHOLE answer (the trim below is for the ledger only).
         try { if (P.YC && typeof P.YC._sniff === 'function') P.YC._sniff(step.method, step.path, settle.result); } catch (_) {}
+        settle.result = trimForLedger(settle.result);   // the ledger keeps 16 KB and the settle refuses 256 KB: shrink STRUCTURALLY, so the server's redaction still sees every key
       } catch (err) {
         // Only an answer FROM THE ROUTE is a failure: a 4xx, or a 500 it wrote itself. No status at all (the
         // connection dropped, a timeout, a blocked redirect) or a 502/503/504 from the edge means the request
         // may have landed — the step stays claimed and reads as UNKNOWN; nothing re-sends it (review B1).
         const st = err && err.status;
-        if (Number.isInteger(st) && ((st >= 400 && st < 500) || st === 500)) settle = { status: 'failed', http_status: st, result: (err && err.body !== undefined) ? err.body : { message: (err && err.message) || 'request failed' } };
+        if (Number.isInteger(st) && ((st >= 400 && st < 500) || st === 500)) settle = { status: 'failed', http_status: st, result: trimForLedger((err && err.body !== undefined) ? err.body : { message: (err && err.message) || 'request failed' }) };
         else note(`Step ${s.step_no}: no answer came back (${(err && err.message) || 'request failed'}). It may or may not have been applied — it is recorded as unknown; check the record before asking again.`);
         stop = true;
       }
@@ -374,6 +376,24 @@ async function runCard(el, card) {
   }
   const fresh = await refreshCard(el, card.id);
   if (!claimStopped && fresh && fresh.status === 'approved') await resumeCard(el, fresh);
+}
+/**
+ * A route's answer, shrunk for the settle when it is large — by STRUCTURE, never by cutting its JSON text: long strings
+ * are cut, long arrays kept to their first items (with a marker), so every key survives and the server's bearer
+ * redaction (lib/caseyRedact) still fires on it. Measured in BYTES (the route's cap is bytes; a Hebrew answer is two
+ * to three bytes a character). Under 200 KB it goes as it is.
+ */
+function trimForLedger(result) {
+  const bytes = (v) => { try { return new TextEncoder().encode(JSON.stringify(v)).length; } catch (_) { return Infinity; } };
+  if (result == null || bytes(result) <= 200000) return result;
+  const shrink = (v, strMax, arrMax, depth) => {
+    if (typeof v === 'string') return v.length > strMax ? v.slice(0, strMax) + '…[cut]' : v;
+    if (Array.isArray(v)) { const head = v.slice(0, arrMax).map((x) => shrink(x, strMax, arrMax, depth + 1)); return v.length > arrMax ? [...head, `…[${v.length - arrMax} more items cut by the page]`] : head; }
+    if (v && typeof v === 'object') { if (depth > 6) return '[object cut]'; const o = {}; for (const [k, x] of Object.entries(v)) o[k] = shrink(x, strMax, arrMax, depth + 1); return o; }
+    return v;
+  };
+  for (const [strMax, arrMax] of [[2000, 50], [500, 20], [200, 5], [80, 2]]) { const t = { truncated_by_page: true, result: shrink(result, strMax, arrMax, 0) }; if (bytes(t) <= 150000) return t; }
+  return { truncated_by_page: true, keys: Object.keys(result && typeof result === 'object' ? result : {}).slice(0, 50) };   // the shape alone
 }
 /** The outcome goes to Casey: POST /api/casey/turn/resume streams its reaction like any turn. */
 async function resumeCard(el, card) {

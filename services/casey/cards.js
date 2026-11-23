@@ -24,6 +24,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { redact } = require('../../lib/caseyRedact');
 
 const RESULT_MAX = 16 * 1024;     // bytes of a step's stored result (the route's answer, as the browser reported it)
 const SUMMARY_MAX = 300;
@@ -39,6 +40,11 @@ const STEP_COLS = 'id, card_id, step_no, method, path, body, tier, purpose, stat
 
 const cut = (s, max) => (s == null ? null : String(s).trim().slice(0, max));   // trimmed, then cut
 const idemKey = (cardId, stepNo) => `casey:${cardId}:${stepNo}`;
+
+/** What the ledger stores for a step's answer: REDACTED (lib/caseyRedact — no bearer reaches the ledger or the model), then cut. */
+function storedResult(value) {
+  return value === undefined ? null : resultText(redact(value).value);
+}
 
 /** A step's result as stored text: JSON of the value, cut on bytes with a marker. */
 function resultText(value) {
@@ -153,16 +159,25 @@ async function claimStep(db, cardId, userId, stepNo) {
 
 /**
  * The browser's SETTLE after the request: status applied (a 2xx) or failed,
- * the HTTP status, and the route's answer (cut). Only the claimed step with
- * this token. → true when recorded.
+ * the HTTP status, and the route's answer — REDACTED (lib/caseyRedact: a
+ * task's action_token and its kin never reach the ledger or the model; S3b-2)
+ * and cut. Only the claimed step with this token. → true when recorded.
  */
 async function settleStep(db, cardId, userId, stepNo, claimToken, { status, httpStatus, result }) {
   if (!['applied', 'failed'].includes(status)) throw new Error('settle status must be applied or failed');
+  // The claim is checked BEFORE the result is touched: redaction and the cut cost CPU, and
+  // the route is open to every staff JWT — a junk token must cost one indexed read (review B1).
+  const [[claimed]] = await db.query(
+    `SELECT 1 AS ok FROM casey_card_steps s JOIN casey_cards c ON c.id = s.card_id
+      WHERE s.card_id = ? AND s.step_no = ? AND c.user_id = ? AND s.status = 'claimed' AND s.claim_token = ? LIMIT 1`,
+    [cardId, stepNo, userId, String(claimToken || '')]);
+  if (!claimed) return false;
+  const stored = storedResult(result);
   const [r] = await db.query(
     `UPDATE casey_card_steps s JOIN casey_cards c ON c.id = s.card_id
         SET s.status = ?, s.http_status = ?, s.result = ?, s.settled_at = UTC_TIMESTAMP()
       WHERE s.card_id = ? AND s.step_no = ? AND c.user_id = ? AND s.status = 'claimed' AND s.claim_token = ?`,
-    [status, Number.isInteger(httpStatus) ? httpStatus : null, resultText(result), cardId, stepNo, userId, String(claimToken || '')]);
+    [status, Number.isInteger(httpStatus) ? httpStatus : null, stored, cardId, stepNo, userId, String(claimToken || '')]);
   return r.affectedRows === 1;
 }
 
@@ -269,5 +284,5 @@ function present(card) {
 
 module.exports = {
   RESULT_MAX, SUMMARY_MAX, PURPOSE_MAX, NOTE_MAX, MAX_STEPS, OPEN, IMPLICIT_DECLINE_NOTE,
-  idemKey, resultText, createCard, getCard, openCard, unresolvedCard, claimStep, settleStep, declineCard, resumeCard, revertResume, resolveForTurn, outcomeText, present,
+  idemKey, resultText, storedResult, createCard, getCard, openCard, unresolvedCard, claimStep, settleStep, declineCard, resumeCard, revertResume, resolveForTurn, outcomeText, present,
 };

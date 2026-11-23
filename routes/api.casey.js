@@ -122,6 +122,7 @@ function dark(res) {
   return true;
 }
 const staff = [jwtOrApiKey, staffOnly];
+const SETTLE_RESULT_MAX = 256 * 1024;   // bytes of a settle's `result` (the page trims a route's answer to this before posting)
 
 router.get('/api/casey/catalog', ...guard, (req, res) => {
   try {
@@ -317,6 +318,10 @@ router.post('/api/casey/cards/:id/settle', ...staff, async (req, res) => {
     if (id === null || step === null) return res.status(400).json({ status: 'error', message: 'card id and step must be positive integers' });
     if (typeof b.claim_token !== 'string' || !b.claim_token) return res.status(400).json({ status: 'error', message: 'claim_token is required' });
     if (!['applied', 'failed'].includes(b.status)) return res.status(400).json({ status: 'error', message: 'status must be applied or failed' });
+    // The ledger keeps 16 KB of a result; a settle carrying megabytes is not a route's answer the page should relay (review B1).
+    if (b.result !== undefined && Buffer.byteLength(JSON.stringify(b.result) || '', 'utf8') > SETTLE_RESULT_MAX) {
+      return res.status(413).json({ status: 'error', message: `result is larger than ${SETTLE_RESULT_MAX} bytes; send its first part` });
+    }
     const httpStatus = Number.isInteger(b.http_status) && b.http_status >= 100 && b.http_status <= 599 ? b.http_status : null;
     const settled = await cards.settleStep(req.db, id, req.auth.userId, step, b.claim_token, { status: b.status, httpStatus, result: b.result });
     if (!settled) return res.status(404).json({ status: 'error', message: 'No claimed step matches that token' });

@@ -126,7 +126,7 @@ describe('autoGet', () => {
       expect([p, staff('HEAD', p).autoGet]).toEqual([p, false]);
     }
     // the hook rule is exact: the executions / targets / meta reads stay open
-    for (const p of ['/api/hooks/:hookId/executions', '/api/hooks/:hookId/targets', '/api/hooks/meta', '/api/hooks/executions']) {
+    for (const p of ['/api/hooks/:hookId/executions', '/api/hooks/meta', '/api/hooks/executions']) {   // S3b-2 closed /api/hooks/:hookId/targets (the targets' headers) and /api/hooks/executions/:id (a delivery's request)
       expect([p, classify({ method: 'GET', path: p, authClass: 'staff:can' }).autoGet]).toEqual([p, true]);
     }
     // /internal/* and /api/impersonation/* are never-proposable first; still closed to auto GET
@@ -171,7 +171,9 @@ describe('the lists are exact snapshots — a change is a deliberate review', ()
     expect(S.NEVER_AUTO_GET.map(r => r.source)).toEqual([
       '^(GET|HEAD) \\/api\\/credentials(\\/|$)', '^(GET|HEAD) \\/api\\/api-keys(\\/|$)', '^(GET|HEAD) \\/api\\/readonly-keys(\\/|$)',
       '^(GET|HEAD) \\/api\\/email-credentials(\\/|$)', '^(GET|HEAD) \\/internal(\\/|$)', '^(GET|HEAD) \\/api\\/impersonation(\\/|$)',
-      '^(GET|HEAD) \\/api\\/hooks$', '^(GET|HEAD) \\/api\\/hooks\\/:id$', '^(GET|HEAD) \\/api\\/comms-archive\\/media\\/:id\\/url$',
+      '^(GET|HEAD) \\/api\\/hooks$', '^(GET|HEAD) \\/api\\/hooks\\/:id$',
+      '^(GET|HEAD) \\/api\\/hooks\\/:hookId\\/targets$', '^(GET|HEAD) \\/api\\/hooks\\/executions\\/:id$',   // S3b-2: target headers / delivery request bodies
+      '^(GET|HEAD) \\/api\\/comms-archive\\/media\\/:id\\/url$',
     ]);
   });
   test('lists are frozen', () => {

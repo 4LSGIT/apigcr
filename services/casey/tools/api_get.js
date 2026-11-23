@@ -30,9 +30,13 @@
 // X-SU-Elevation header is NOT forwarded: no autoGet row is an SU route, so
 // an elevation can buy nothing here; S3's api_write forwards it for cards.
 // Timeout 20 s (AbortController). Loopback target: http://127.0.0.1:${ctx.port}.
+// The answer is passed through lib/caseyRedact (S3b-2): bearer-shaped values —
+// a task's action_token, a contact_token — never reach the model; the data
+// carries `redacted: n` when any were, so the model knows a field was withheld.
 'use strict';
 
 const catalog = require('../../../lib/routeCatalog');
+const { redact } = require('../../../lib/caseyRedact');
 const { ToolError } = require('./index_error');
 
 const TIMEOUT_MS = 20_000;
@@ -88,7 +92,7 @@ async function readCapped(res, cap, route) {
 
 module.exports = {
   name: 'api_get',
-  description: 'Call a GET route of this app as the current user (their own session, their own permissions; the route\'s own 403 tells you what was missing). Only staff GET routes marked auto-runnable are allowed: superuser routes, credential/key reads and non-JSON responses are refused with the reason. Give the concrete path (e.g. /api/contacts/123) and query parameters as an object. Returns { status, body }. Find routes with lookup_routes; read the handler with read_source.',
+  description: 'Call a GET route of this app as the current user (their own session, their own permissions; the route\'s own 403 tells you what was missing). Only staff GET routes marked auto-runnable are allowed: superuser routes, credential/key reads and non-JSON responses are refused with the reason. Give the concrete path (e.g. /api/contacts/123) and query parameters as an object. Returns { status, body, redacted? } — token-, secret- and password-shaped values in the answer read "[redacted]" and `redacted` is how many values were withheld; never ask for them another way (paging cursors such as nextPageToken are left intact). Find routes with lookup_routes; read the handler with read_source.',
   input_schema: {
     type: 'object',
     properties: {
@@ -154,7 +158,8 @@ module.exports = {
     }
     let body;
     try { body = JSON.parse(text); } catch (_) { throw new ToolError('BAD_JSON', `the route answered ${res.status} with unparseable JSON`, { route: row.path, status: res.status }); }
-    return { route: row.path, status: res.status, body };
+    const r = redact(body);   // S3b-2: no bearer reaches the model
+    return { route: row.path, status: res.status, ...(r.count ? { redacted: r.count } : {}), body: r.value };   // `redacted` before the body: the envelope's 60 KB cut must not drop it
   },
   // Shared with api_write (S3b): the same path rules and query building for a card's steps.
   cleanPath, queryString,

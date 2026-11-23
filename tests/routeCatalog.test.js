@@ -326,7 +326,7 @@ describe('snapshots — a change here is a deliberate review', () => {
   test('closed staff GETs (not auto, not a card) — credential-returning reads and plumbing', () => {
     expect(rows.filter(r => STAFF.has(r.authClass) && r.authClass !== 'su' && r.method === 'GET' && !r.autoGet).map(at)).toEqual([
       'GET /api/assistant/chats', 'GET /api/assistant/chats/:id(\\d+)', 'GET /api/casey/boot', 'GET /api/casey/cards/:id', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/comms-archive/media/:id/url', 'GET /api/credentials', 'GET /api/email-credentials',
-      'GET /api/hooks', 'GET /api/hooks/:id', 'GET /api/impersonation/users', 'GET /auth/validate', 'GET /clio-code',
+      'GET /api/hooks', 'GET /api/hooks/:hookId/targets', 'GET /api/hooks/:id', 'GET /api/hooks/executions/:id', 'GET /api/impersonation/users', 'GET /auth/validate', 'GET /clio-code',
       'GET /internal/email-test/credentials', 'GET /internal/email-test/credentials/oauth',
     ]);
     for (const r of rows.filter(r => STAFF.has(r.authClass) && r.authClass !== 'su' && r.method === 'GET' && !r.autoGet)) expect(r.proposable).toBe(false);

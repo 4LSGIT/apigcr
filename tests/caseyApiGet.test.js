@@ -40,6 +40,8 @@ probe.get('/api/_casey_probe/text', jwtOrApiKey, (req, res) => { hits.push('text
 probe.get('/api/_casey_probe/pdf', jwtOrApiKey, (req, res) => { hits.push('pdf'); res.type('application/pdf').send(Buffer.from('%PDF')); });
 probe.get('/api/_casey_probe/bad', jwtOrApiKey, (req, res) => { hits.push('bad'); res.type('application/json').send('{nope'); });
 probe.get('/api/_casey_probe/forbidden', jwtOrApiKey, (req, res) => { hits.push('forbidden'); res.status(403).json({ status: 'error', message: 'needs automations.manage' }); });
+probe.get('/api/_casey_probe/bigtoken', jwtOrApiKey, (req, res) => { hits.push('bigtoken'); res.json({ status: 'success', api_key: 'KEYKEYKEYKEY', rows: Array.from({ length: 2000 }, (_, i) => ({ i, pad: 'p'.repeat(40) })) }); });   // > 60 KB: the envelope cuts it
+probe.get('/api/_casey_probe/token', jwtOrApiKey, (req, res) => { hits.push('token'); res.json({ status: 'success', task: { id: 9, action_token: 'uUUZoVRSabcd', action_url: 'https://app.test/t/uUUZoVRSabcd', token_type: 'Bearer', input_tokens: 10 }, api_key: 'KEYKEYKEYKEY' }); });   // S3b-2: bearers in a read's answer
 probe.get('/api/_casey_probe/hang', jwtOrApiKey, (req, res) => { hits.push('hang'); req.on('close', () => res.end()); });
 probe.get('/api/_casey_probe/redirect', jwtOrApiKey, (req, res) => { hits.push('redirect'); res.redirect(302, '/api/casey/catalog'); });
 probe.get('/api/_casey_probe/jsonseq', jwtOrApiKey, (req, res) => { hits.push('jsonseq'); res.type('application/json-seq').send('{}\n'); });
@@ -229,4 +231,20 @@ test('findRoute dispatches like Express: first registered row wins, by method, _
   expect([row.matches('/api/_casey_probe/9'), row.matches('/api/_casey_probe/9'), row.matches('/api/_casey_probe/9/x')]).toEqual([true, true, false]);
   expect(Object.keys(row)).not.toContain('matches');
   expect(Object.keys(row)).not.toContain('seq');
+});
+
+test('S3b-2: bearer-shaped values in a route\'s answer are redacted before the model sees them, in the field and inside a URL; `redacted` counts them; other fields untouched', async () => {
+  const r = await get({ path: '/api/_casey_probe/token' });
+  expect(r.ok).toBe(true);
+  expect(r.data).toEqual({ route: '/api/_casey_probe/token', status: 200, redacted: 2, body: { status: 'success', task: { id: 9, action_token: '[redacted]', action_url: 'https://app.test/t/[redacted]', token_type: 'Bearer', input_tokens: 10 }, api_key: '[redacted]' } });   // redacted = the two blanked values (the URL is scrubbed, not counted)
+  expect(JSON.stringify(r)).not.toContain('uUUZoVRSabcd');
+  expect(JSON.stringify(r)).not.toContain('KEYKEYKEYKEY');
+  const plain = await get({ path: '/api/_casey_probe/echo' });
+  expect(plain.data.redacted).toBeUndefined();   // nothing withheld: no field
+  // `redacted` sits BEFORE the body, so the envelope's 60 KB cut keeps it (review N5).
+  const big = await get({ path: '/api/_casey_probe/bigtoken' });
+  expect(big.truncated).toBe(true);
+  expect(typeof big.data).toBe('string');
+  expect(big.data.startsWith('{"route":"/api/_casey_probe/bigtoken","status":200,"redacted":1,"body":{"status":"success","api_key":"[redacted]"')).toBe(true);
+  expect(big.data).not.toContain('KEYKEYKEYKEY');
 });

@@ -43,6 +43,7 @@ lib/caseRoleResolver.js
 lib/caseyAutomationAllowlist.js
 lib/caseyCardContent.js
 lib/caseyPrompt.js
+lib/caseyRedact.js
 lib/caseySensitivity.js
 lib/caseySqlRules.js
 lib/checklistStatus.js
@@ -1391,6 +1392,7 @@ tests/caseyApptConfirm.mysql.test.js
 tests/caseyApptConfirm.test.js
 tests/caseyCardContent.test.js
 tests/caseyCards.mysql.test.js
+tests/caseyCardsSettle.test.js
 tests/caseyCaseContacts.mysql.test.js
 tests/caseyCaseContacts.test.js
 tests/caseyCaseFields.mysql.test.js
@@ -1446,6 +1448,7 @@ tests/caseyPipelineTransfer.test.js
 tests/caseyPrompt.test.js
 tests/caseyQueryDbColumns.mysql.test.js
 tests/caseyRecordText.test.js
+tests/caseyRedact.test.js
 tests/caseyRelink.mysql.test.js
 tests/caseyRelink.test.js
 tests/caseyReportDraft.mysql.test.js
