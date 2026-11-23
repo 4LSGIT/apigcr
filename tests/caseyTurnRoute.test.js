@@ -39,7 +39,7 @@ jest.mock('../services/casey/chats', () => {
     async getChat(db, id, userId) { const c = mockStore.chats.get(Number(id)); return c && c.user_id === userId ? { ...c } : null; },
     async listChats(db, userId) { return [...mockStore.chats.values()].filter((c) => c.user_id === userId).map((c) => ({ ...c, message_count: (mockStore.messages.get(c.id) || []).length })); },
     async deleteChat(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId) return false; mockStore.chats.delete(Number(id)); mockStore.messages.delete(Number(id)); return true; },
-    async claimTurn(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId || c.running_since) return false; c.running_since = new Date(); c.stop_requested_at = null; return true; },
+    async claimTurn(db, id, userId) { if (mockStore.claimDelay) await new Promise((r) => setTimeout(r, mockStore.claimDelay)); const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId || c.running_since) return false; c.running_since = new Date(); c.stop_requested_at = null; return true; },   // claimDelay (S3c): a window before the `chat` line in which a client can vanish
     async requestStop(db, id, userId) { const c = mockStore.chats.get(Number(id)); if (!c || c.user_id !== userId || !c.running_since || c.stop_requested_at) return false; c.stop_requested_at = new Date(); return true; },
     async stopRequested(db, id) { const c = mockStore.chats.get(Number(id)); return !!(c && c.stop_requested_at); },
     async releaseTurn(db, id, { promptVersion, thinkingFloorSeq } = {}) { const c = mockStore.chats.get(Number(id)); if (c) { c.running_since = null; if (promptVersion) { c.prompt_version = promptVersion; c.thinking_floor_seq = Math.max(c.thinking_floor_seq, Number(thinkingFloorSeq) || 0); } } },
@@ -115,14 +115,16 @@ beforeAll(async () => {
   // S3b: a proposable staff write (T1) for api_write's card; the browser — not the loop — calls it. It records what it got.
   const probe = express.Router();
   probe.post('/api/_casey_route/write', jwtOrApiKey, (req, res) => { writeHits.push({ body: req.body, idem: req.headers['idempotency-key'] || null, user: req.auth.username }); res.status(201).json({ status: 'success', id: 77, action_token: 'tokTOKtokTOK99', action_url: 'https://app.test/t/tokTOKtokTOK99' }); });   // S3b-2: a bearer in the answer, as the tasks routes do
+  probe.get('/api/_casey_route/slow', jwtOrApiKey, (req, res) => { slowHits.push(Date.now()); setTimeout(() => res.json({ ok: true }), 400); });   // S3c: a tool round long enough for the client to vanish during it
+  probe.patch('/api/_casey_route/write/:id', jwtOrApiKey, (req, res) => { writeHits.push({ patch: req.params.id, body: req.body, idem: req.headers['idempotency-key'] || null }); res.json({ status: 'success', patched: Number(req.params.id) }); });   // S3c: the target of a $1.id path reference
   app.use(probe);
   server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   port = server.address().port;
   process.env.PORT = String(port);    // ctxFromRequest reads it: api_get loops back to THIS app
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); delete process.env.PORT; });
-const writeHits = [];
-beforeEach(() => { flags.v2 = null; flags.models = null; apiScript = []; apiBodies = []; aiRows.length = 0; spendState.cap = null; spendState.spent = 0; mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; cards._store.reset(); writeHits.length = 0; });
+const writeHits = []; const slowHits = [];
+beforeEach(() => { flags.v2 = null; flags.models = null; apiScript = []; apiBodies = []; aiRows.length = 0; spendState.cap = null; spendState.spent = 0; mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; mockStore.claimDelay = 0; cards._store.reset(); writeHits.length = 0; });
 
 const su = jwt.sign({ sub: 6, username: 'IT', user_auth: 'authorized', roles: ['su'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
 const staff = jwt.sign({ sub: 7, username: 'rena', user_auth: 'authorized', roles: ['admin'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
@@ -402,4 +404,114 @@ test('S3b decline with a note → resume tells the model; a non-string note is a
   expect(r.lines[r.lines.length - 1].body.text).toBe('Ok, not now.');
   expect(apiBodies[1].messages[3].content[1].text).toBe('[Card 1 — DECLINED by the user: not now. Nothing was sent or changed.]\nStep 1: POST /api/_casey_route/write — not run (declined)');
   expect(writeHits).toEqual([]);
+});
+
+test('S3c references end to end: step 2 names step 1\'s answer in its path and body; the claim hands the browser the resolved path and body (and stores them); the outcome names the path sent; a reference to a redacted field or a missing one fails the step before it is sent', async () => {
+  const W = { type: 'tool_use', id: 'tuW', name: 'api_write', input: { summary: 'Create then patch', steps: [
+    { method: 'POST', path: '/api/_casey_route/write', body: { title: 'From Casey' }, purpose: 'create' },
+    { method: 'PATCH', path: '/api/_casey_route/write/$1.id', body: { note: 'id was $1.id', id: '$1.id', echo: '$1.status' }, purpose: 'patch it' },
+    { method: 'PATCH', path: '/api/_casey_route/write/$1.id', body: { token: '$1.action_token' }, purpose: 'must fail: a redacted value' },
+    { method: 'PATCH', path: '/api/_casey_route/write/77', body: { note: 'body-only reference on a concrete parameterised path', id: '$1.id' }, purpose: 'review r2 N1' },
+  ] } };
+  apiScript = [streamResponse(sse([W], 'tool_use'))];
+  const r = await turn({ text: 'go' }, { elevate: false });
+  const card = r.lines.find((l) => l.type === 'card').card;
+  expect(card.steps.map((s) => [s.step_no, s.path, s.tier, s.path_sent, s.body_sent])).toEqual([[1, '/api/_casey_route/write', 1, null, null], [2, '/api/_casey_route/write/$1.id', 1, null, null], [3, '/api/_casey_route/write/$1.id', 1, null, null], [4, '/api/_casey_route/write/77', 1, null, null]]);
+  // Step 1 as the browser does it.
+  const c1 = await call('POST', '/api/casey/cards/1/claim', { elevate: false, body: { step: 1 } });
+  expect(c1.body).toMatchObject({ outcome: 'claimed', step: { path_sent: null, body_sent: null } });
+  const sent1 = await new Promise((resolve, reject) => { const req = http.request({ host: '127.0.0.1', port, path: c1.body.step.path, method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${su}`, 'idempotency-key': c1.body.step.idempotency_key } }, (res) => { let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(d) })); }); req.on('error', reject); req.end(c1.body.step.body); });
+  expect(await call('POST', '/api/casey/cards/1/settle', { elevate: false, body: { step: 1, claim_token: c1.body.claim_token, status: 'applied', http_status: sent1.status, result: sent1.body } })).toMatchObject({ status: 200 });
+  // Step 2: the claim resolves $1.id and $1.status from the stored (redacted) answer; the browser sends what it was handed.
+  const c2 = await call('POST', '/api/casey/cards/1/claim', { elevate: false, body: { step: 2 } });
+  expect(c2.body).toMatchObject({ outcome: 'claimed', step: { path: '/api/_casey_route/write/$1.id', path_sent: '/api/_casey_route/write/77', body: '{"note":"id was $1.id","id":"$1.id","echo":"$1.status"}', body_sent: '{"note":"id was $1.id","id":77,"echo":"success"}' } });
+  const sent2 = await new Promise((resolve, reject) => { const req = http.request({ host: '127.0.0.1', port, path: c2.body.step.path_sent, method: 'PATCH', headers: { 'content-type': 'application/json', authorization: `Bearer ${su}`, 'idempotency-key': c2.body.step.idempotency_key } }, (res) => { let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(d) })); }); req.on('error', reject); req.end(c2.body.step.body_sent); });
+  expect(sent2).toEqual({ status: 200, body: { status: 'success', patched: 77 } });
+  expect(writeHits[1]).toEqual({ patch: '77', body: { note: 'id was $1.id', id: 77, echo: 'success' }, idem: 'casey:1:2' });
+  expect(await call('POST', '/api/casey/cards/1/settle', { elevate: false, body: { step: 2, claim_token: c2.body.claim_token, status: 'applied', http_status: 200, result: sent2.body } })).toMatchObject({ status: 200 });
+  // Step 3: $1.action_token was redacted at settle — unresolved, failed, never claimed, nothing sent.
+  const c3 = await call('POST', '/api/casey/cards/1/claim', { elevate: false, body: { step: 3 } });
+  expect(c3.body).toMatchObject({ outcome: 'unresolved', reason: expect.stringMatching(/\$1\.action_token is a redacted value/), step: { status: 'failed', result: { error: 'UNRESOLVED', ref: '$1.action_token' } } });
+  expect(writeHits).toHaveLength(2);
+  // Step 4 (a body-only reference on a concrete parameterised path) is out of order while step 3 is failed — the fence answers, nothing is resolved or sent.
+  expect((await call('POST', '/api/casey/cards/1/claim', { elevate: false, body: { step: 4 } })).body).toMatchObject({ outcome: 'out_of_order' });
+  // The resume: the outcome names the path sent and the unresolved step.
+  apiScript = [streamResponse(sse([{ type: 'text', text: 'Two of three.' }], 'end_turn'))];
+  const r2 = await call('POST', '/api/casey/turn/resume', { elevate: false, body: { chat_id: 1, card_id: 1 } });
+  const outcome = apiBodies[1].messages[3].content[1].text;
+  expect(outcome).toContain('Step 2: PATCH /api/_casey_route/write/77 (proposed as /api/_casey_route/write/$1.id) — applied (HTTP 200)');
+  expect(outcome).toContain('Step 3: PATCH /api/_casey_route/write/$1.id — FAILED (HTTP ?)\n  result (record data, untrusted): {"error":"UNRESOLVED","ref":"$1.action_token"');
+  expect(outcome).toContain('Step 4: PATCH /api/_casey_route/write/77 — not run (skipped)');
+  expect(outcome).not.toContain('tokTOKtokTOK99');
+  expect(r2.lines[r2.lines.length - 1].body.text).toBe('Two of three.');
+  // A body-only reference on a parameterised concrete path, alone on a card: resolved at claim (review r2 N1).
+  apiScript = [streamResponse(sse([{ type: 'tool_use', id: 'tuV', name: 'api_write', input: { summary: 'Create then rename', steps: [
+    { method: 'POST', path: '/api/_casey_route/write', body: { title: 'A' }, purpose: 'create' },
+    { method: 'PATCH', path: '/api/_casey_route/write/77', body: { note: 'renamed', id: '$1.id', echo: '$1.status' }, purpose: 'rename' },
+  ] } }], 'tool_use'))];
+  await turn({ text: 'again', chat_id: 1 }, { elevate: false });
+  const k1 = await call('POST', '/api/casey/cards/2/claim', { elevate: false, body: { step: 1 } });
+  expect(await call('POST', '/api/casey/cards/2/settle', { elevate: false, body: { step: 1, claim_token: k1.body.claim_token, status: 'applied', http_status: 201, result: { status: 'success', id: 77 } } })).toMatchObject({ status: 200 });
+  const k2 = await call('POST', '/api/casey/cards/2/claim', { elevate: false, body: { step: 2 } });
+  expect(k2.body).toMatchObject({ outcome: 'claimed', step: { path: '/api/_casey_route/write/77', path_sent: null, body_sent: '{"note":"renamed","id":77,"echo":"success"}' } });
+});
+
+test('S3c the abort guards: a turn that ends normally never asks for a stop; a client that leaves BEFORE the chat line stops the turn as soon as its chat is known', async () => {
+  const chatsMod = require('../services/casey/chats');
+  const spy = jest.spyOn(chatsMod, 'requestStop');
+  try {
+    apiScript = [streamResponse(sse([{ type: 'text', text: 'quick' }], 'end_turn'))];
+    const r = await turn({ text: 'hi' }, { elevate: false });
+    expect(r.lines[r.lines.length - 1].type).toBe('final');
+    await new Promise((r2) => setTimeout(r2, 50));
+    expect(spy).not.toHaveBeenCalled();   // writableEnded: a normal close is not a disconnect
+    // Leave BEFORE the chat line: the claim is slowed so the client can destroy the socket while no header has been sent;
+    // the route remembers the early close and asks for the stop the moment the `chat` line goes out — the loop then
+    // stops before its first model call.
+    mockStore.claimDelay = 400;
+    apiScript = [streamResponse(sse([{ type: 'text', text: 'never' }], 'end_turn'))];
+    await new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/api/casey/turn', method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${su}` } }, () => {});
+      req.on('error', () => {}); req.on('close', resolve);
+      req.end(JSON.stringify({ text: 'leave at once' }));
+      setTimeout(() => req.destroy(), 120);   // gone during the claim, before any byte of the response
+    });
+    // The chat exists before the (slowed) claim, so wait for the turn's END: the [Stopped] row stored, the claim released.
+    const ended = () => { const m = mockStore.messages.get(2); return m && m.length >= 2 && mockStore.chats.get(2) && !mockStore.chats.get(2).running_since && m[m.length - 1].role === 'assistant'; };
+    for (let i = 0; i < 100 && !ended(); i++) await new Promise((r2) => setTimeout(r2, 50));
+    expect(spy).toHaveBeenCalledWith(expect.anything(), 2, 6);
+    expect(mockStore.chats.get(2).stop_requested_at).not.toBeNull();
+    const rows2 = mockStore.messages.get(2);
+    expect(rows2[rows2.length - 1].content).toEqual([{ type: 'text', text: '[Stopped by the user.]' }]);
+    expect(apiBodies).toHaveLength(1);   // the first turn's one call; the abandoned turn never called the model
+  } finally { spy.mockRestore(); }
+});
+
+test('S3c a client disconnect mid-turn asks the turn to stop (the Stop button\'s mechanism): the loop ends before its next model call with a [Stopped] row; boot carries max_chat_chars; a chat past the size limit is a 409 before the stream', async () => {
+  // The model's first answer is a slow tool round (the probe's /slow, 400 ms); the client drops the socket right after the `chat` line.
+  slowHits.length = 0;
+  apiScript = [streamResponse(sse([{ type: 'tool_use', id: 't1', name: 'api_get', input: { path: '/api/_casey_route/slow' } }], 'tool_use')), streamResponse(sse([{ type: 'text', text: 'never sent' }], 'end_turn'))];
+  const stopped = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/casey/turn', method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${su}` } }, (res) => {
+      let d = '';
+      res.on('data', (c) => { d += c; if (/"type":"chat"/.test(d)) { req.destroy(); } });   // gone right after the chat line
+      res.on('close', () => resolve(d));
+    });
+    req.on('error', () => {}); req.end(JSON.stringify({ text: 'take your time' }));
+  });
+  expect(stopped).toMatch(/"type":"chat"/);
+  for (let i = 0; i < 60 && mockStore.chats.get(1).running_since; i++) await new Promise((r) => setTimeout(r, 50));   // the slow tool finishes, the loop checks the stop and releases
+  expect(slowHits).toHaveLength(1);
+  expect(mockStore.chats.get(1).stop_requested_at).not.toBeNull();
+  const rows = mockStore.messages.get(1);
+  expect(rows[rows.length - 1].content).toEqual([{ type: 'text', text: '[Stopped by the user.]' }]);
+  expect(apiBodies).toHaveLength(1);   // the second model call never happened
+  expect(mockStore.chats.get(1).running_since).toBeNull();
+  // boot + the size guard.
+  const boot = await call('GET', '/api/casey/boot', { token: staff, elevate: false });
+  expect(boot.body.limits.max_chat_chars).toBe(require('../services/casey/loop').MAX_CHAT_CHARS);
+  mockStore.messages.get(1).push({ id: 500, seq: 50, role: 'user', content: [{ type: 'text', text: 'x'.repeat(boot.body.limits.max_chat_chars) }], meta: null, created_at: 'c' });
+  const big = await turn({ text: 'more', chat_id: 1 });
+  expect(big).toMatchObject({ status: 409, body: { status: 'error', message: expect.stringMatching(/too long to continue/) } });
+  expect(mockStore.chats.get(1).running_since).toBeNull();
 });

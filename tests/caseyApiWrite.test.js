@@ -137,12 +137,62 @@ describe('refusals — nothing stored, nothing run', () => {
     await refused(STAFF, { summary: 's', steps: [step({ path: '/admin/system-alerts/ack', body: { ids: [1] } })] }, 'FORBIDDEN', /superuser only/);
     await refused({ type: 'api_key', key_label: 'k', scopes: null }, { summary: 's', steps: [step({ path: '/api/phone-lines/3/sms', body: { to: 'x', message: 'm' } })] }, 'FORBIDDEN', /not a machine key/);
   });
-  test('the body: not an object; a `$N` / `$N.field` reference anywhere (S3c); too large; a later step\'s refusal leaves the earlier valid step unstored', async () => {
+  test('the body: not an object; a malformed or forward `$N` reference (S3c); a reference in a query value; too large; a later step\'s refusal leaves the earlier valid step unstored', async () => {
     await refused(STAFF, { summary: 's', steps: [step({ body: 'title=x' })] }, 'BAD_INPUT', /steps\[0\]: body must be object, got string/);
     await refused(STAFF, { summary: 's', steps: [step({ body: [1] })] }, 'BAD_INPUT', /must be object, got array/);
-    await refused(STAFF, { summary: 's', steps: [step({ body: { title: 't' } }), step({ body: { title: 'x', contact_id: '$1.contact_id' } })] }, 'UNSUPPORTED_REF', /steps\[1\]: body\.contact_id is "\$1\.contact_id"/);
-    await refused(STAFF, { summary: 's', steps: [step({ body: { tags: ['a', { deep: '$2' }] } })] }, 'UNSUPPORTED_REF', /body\.tags\[1\]\.deep is "\$2"/);
-    expect(apiWrite.findRef({ a: 'price is $5' })).toBeNull();   // a dollar amount is not a reference
+    await refused(STAFF, { summary: 's', steps: [step({ body: { tags: ['a', { deep: '$2' }] } })] }, 'BAD_REF', /body\.tags\[1\]\.deep is "\$2" — a reference is "\$N\.field"/);   // malformed
+    await refused(STAFF, { summary: 's', steps: [step({ body: { id: '$1.task_id' } })] }, 'BAD_REF', /must name an EARLIER step of this card \(1–0\)/);       // the step itself
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 't' } }), step({ body: { id: '$3.task_id' } })] }, 'BAD_REF', /EARLIER step .* \(1–1\)/);   // a later step
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 't' } }), step({ path: '/api/tasks/$2.task_id' })] }, 'BAD_REF', /path is "\$2\.task_id"/);
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 't' } }), step({ query: { id: '$1.task_id' } })] }, 'BAD_REF', /query\.id is "\$1\.task_id" — a reference cannot be a query value/);
+    expect(apiWrite.refShapes({ a: 'price is $5', b: '$1.x' })).toEqual([{ at: 'body.b', text: '$1.x', ref: { step: 1, path: ['x'], text: '$1.x' } }]);   // a dollar amount is not a reference
     await refused(STAFF, { summary: 's', steps: [step({ body: { pad: 'x'.repeat(apiWrite.BODY_MAX) } })] }, 'BAD_BODY', /larger than/);
+  });
+});
+
+describe('S3c references', () => {
+  const refused = async (auth, input, code, re) => { const r = await run(auth, input); expect(r.ok).toBe(false); expect(r.error.code).toBe(code); if (re) expect(r.error.message).toMatch(re); return r; };
+  test('a later step may reference an earlier step\'s result in its body (any depth) and as a whole path segment standing for a route parameter; the template is PINNED to that route at proposal (its real tier, proposability and the user\'s right checked then); the stored body keeps the reference text', async () => {
+    const r = await run(STAFF, { summary: 'Create then update', steps: [
+      step({ body: { title: 'T' } }),
+      { method: 'PATCH', path: '/api/tasks/$1.task_id', body: { note: 'created as $1.task_id', title: '$1.title', ids: ['$1.rows.0.id'] }, purpose: 'then patch it' },
+      { method: 'DELETE', path: '/api/cases/$1.case_id/contacts/$1.contact_id', purpose: 'drop the link' },
+    ] });
+    expect(r.ok).toBe(true);
+    expect(r.data.steps).toEqual([
+      { step: 1, method: 'POST', path: '/api/tasks', tier: 'T1', route: '/api/tasks' },
+      { step: 2, method: 'PATCH', path: '/api/tasks/$1.task_id', tier: 'T1', route: '/api/tasks/:id(\\d+)' },   // pinned by structure: the reference stands on :id
+      { step: 3, method: 'DELETE', path: '/api/cases/$1.case_id/contacts/$1.contact_id', tier: 'T2', route: '/api/cases/:id/contacts/:contactId' },
+    ]);
+    const card = await cards.getCard(dbStub, 1, 7);
+    expect(card.tier).toBe(2);
+    expect(card.steps[1].body).toBe('{"note":"created as $1.task_id","title":"$1.title","ids":["$1.rows.0.id"]}');   // the template, references intact ("created as $1.task_id" is text, not a reference — only a WHOLE value is)
+    expect(card.steps[1].path_sent).toBeNull();
+    cards._store.reset();
+    // A template no route has parameters for, or a reference on a literal position, is refused at proposal — the answer could otherwise pick the route (review B3).
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'PATCH', path: '/api/$1.a/$1.b', purpose: 'p' }] }, 'NO_ROUTE', /no PATCH route has parameters where \/api\/\$1\.a\/\$1\.b carries references/);
+    await refused(SU, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/admin/system-alerts/$1.seg', body: { ids: [1] }, purpose: 'p' }] }, 'NO_ROUTE', /no POST route has parameters/);
+    // A pinned route is checked like any other: a staff user cannot pin an SU route; a never-proposable one is refused.
+    const suRow = require('../lib/routeCatalog').catalogFor(app).rows.find((x) => x.authClass === 'su' && x.proposable && x.method === 'PATCH' && /:id/.test(x.path));
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'PATCH', path: suRow.path.replace(/:id[^/]*/, '$1.id'), body: {}, purpose: 'p' }] }, 'FORBIDDEN', /superuser only/);
+    await refused(SU, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'DELETE', path: '/admin/api-tester/saved/$1.id', query: { x: '1' }, purpose: 'p' }] }, 'NOT_PROPOSABLE', /never-proposable/);   // review B1's probe: the query no longer hides the reference
+    // A send takes no reference in its body (the user must see what they approve); a prototype key is refused anywhere.
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/api/mail/send', body: { to: ['x@x.test'], subject: '$1.title', body_text: 'see' }, purpose: 'tell' }] }, 'BAD_REF', /a send takes no reference in its body/);   // a WHOLE-value reference; "Task $1.task_id" would be plain text
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/api/phone-lines/3/sms', body: { to: '$1.phone', message: 'hi' }, purpose: 'text' }] }, 'BAD_REF', /a send takes no reference/);
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/API/Mail/Send', body: { to: ['$1.email'], subject: 's', body_text: 'b' }, purpose: 'tell' }] }, 'BAD_REF', /a send takes no reference in its body/);   // S-a: the matched route decides, not the model's spelling
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/api/mail/send/', body: { to: ['$1.email'], subject: 's', body_text: 'b' }, purpose: 'tell' }] }, 'BAD_REF', /a send takes no reference in its body/);
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/api/Phone-Lines/3/SMS', body: { to: '$1.phone', message: 'hi' }, purpose: 'text' }] }, 'BAD_REF', /a send takes no reference in its body/);
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/api/phone-lines/$1.line/sms', body: { to: '+12485550100', message: 'hi' }, purpose: 'text' }] }, 'BAD_REF', /a send takes no reference in its path/);   // the sending line chosen by an answer: refused
+    // Every outbound send on lib/caseySensitivity SEND_PATHS, not only mail and SMS (review r3 nit): e-sign, a campaign test, a CTA message.
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/api/esign/send-from-template', body: { template_id: 1, signer_email: '$1.email' }, purpose: 'sign' }] }, 'BAD_REF', /a send takes no reference in its body/);
+    await refused(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/api/campaigns/test-send', body: { to: '$1.email' }, purpose: 'test' }] }, 'BAD_REF', /a send takes no reference in its body/);
+    await refused(SU, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'POST', path: '/api/cta/$1.id/send', body: {}, purpose: 'cta' }] }, 'BAD_REF', /a send takes no reference in its path/);
+    // A known id beside a reference pins the route (S-b); a body-only reference on a parameterised concrete path is an ordinary step.
+    const mixed = await run(STAFF, { summary: 's', steps: [step({ body: { t: 1 } }), { method: 'DELETE', path: '/api/cases/42/contacts/$1.contact_id', purpose: 'drop' }, { method: 'PATCH', path: '/api/tasks/1830', body: { title: '$1.title' }, purpose: 'rename' }] });
+    expect(mixed.data.steps.slice(1)).toEqual([{ step: 2, method: 'DELETE', path: '/api/cases/42/contacts/$1.contact_id', tier: 'T2', route: '/api/cases/:id/contacts/:contactId' }, { step: 3, method: 'PATCH', path: '/api/tasks/1830', tier: 'T1', route: '/api/tasks/:id(\\d+)' }]);
+    cards._store.reset();
+    await refused(STAFF, { summary: 's', steps: [step({ body: JSON.parse('{"title":"t","__proto__":{"x":1}}') })] }, 'BAD_BODY', /body\.__proto__ is not an allowed key/);
+    await refused(STAFF, { summary: 's', steps: [step({ body: { a: [{ constructor: 1 }] } })] }, 'BAD_BODY', /body\.a\[0\]\.constructor is not an allowed key/);
+    expect(cards._store.cards.size).toBe(0);
   });
 });

@@ -30,7 +30,7 @@ function make(actual) {
       store.cards.set(id, {
         id, chat_id: Number(chatId), user_id: userId, tool_use_id: String(toolUseId).slice(0, 64), tier, summary: String(summary || '').slice(0, actual.SUMMARY_MAX) || '(no summary)',
         status: 'proposed', decline_note: null, resumed_at: null, created_at: 'c',
-        steps: steps.map((s, i) => ({ step_no: i + 1, method: s.method, path: s.path, body: s.body == null ? null : String(s.body), tier: s.tier, purpose: String(s.purpose || '').slice(0, actual.PURPOSE_MAX), status: 'pending', claim_token: null, http_status: null, result: null, idempotency_key: actual.idemKey(id, i + 1), claimed_at: null, settled_at: null })),
+        steps: steps.map((s, i) => ({ step_no: i + 1, method: s.method, path: s.path, body: s.body == null ? null : String(s.body), path_sent: null, body_sent: null, tier: s.tier, purpose: String(s.purpose || '').slice(0, actual.PURPOSE_MAX), status: 'pending', claim_token: null, http_status: null, result: null, idempotency_key: actual.idemKey(id, i + 1), claimed_at: null, settled_at: null })),
       });
       return id;
     },
@@ -43,10 +43,16 @@ function make(actual) {
       const c = [...store.cards.values()].filter((x) => x.chat_id === Number(chatId) && x.user_id === userId && ['proposed', 'approved', 'declined'].includes(x.status)).sort((a, b) => b.id - a.id)[0];
       return view(c || null);
     },
-    async claimStep(db, cardId, userId, stepNo) {
+    async claimStep(db, cardId, userId, stepNo, { resolve = null } = {}) {
       const c = mine(cardId, userId); if (!c) return null;
       const s = c.steps.find((x) => x.step_no === Number(stepNo)); if (!s) return null;
       const earlierNotApplied = c.steps.some((x) => x.step_no < s.step_no && x.status !== 'applied');
+      if (resolve && actual.OPEN.includes(c.status) && s.status === 'pending') {
+        const earlier = new Map(view(c).steps.filter((x) => x.step_no < s.step_no).map((x) => [x.step_no, { status: x.status, result: x.result }]));
+        const res = await resolve(view(c).steps.find((x) => x.step_no === s.step_no), earlier, view(c));
+        if (!res.ok) { s.status = 'failed'; s.result = JSON.stringify({ error: 'UNRESOLVED', ref: res.ref || null, reason: res.reason }); s.settled_at = 'now'; if (c.status === 'proposed') c.status = 'approved'; return { outcome: 'unresolved', reason: res.reason, step: view(c).steps.find((x) => x.step_no === s.step_no) }; }
+        s.path_sent = res.path; s.body_sent = res.body;
+      }
       if (actual.OPEN.includes(c.status) && s.status === 'pending' && !earlierNotApplied) {
         s.status = 'claimed'; s.claim_token = crypto.randomUUID(); s.claimed_at = 'now';
         if (c.status === 'proposed') c.status = 'approved';

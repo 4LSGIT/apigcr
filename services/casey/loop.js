@@ -108,6 +108,7 @@ const MAX_TOKENS_RETRY = 64000;        // the one retry after a max_tokens cut
 const HEARTBEAT_MS = 15000;
 const CALL_TIMEOUT_FLOOR_MS = 120000;   // every model call gets at least this, whatever is left of the turn budget
 const TEXT_MAX = 4000;                 // the user's message
+const MAX_CHAT_CHARS = 600000;         // S3c: the stored history's JSON length a chat may reach before it must be left (~150k tokens — a Sonnet / Opus context minus the prompt); 409 past it, before anything streams
 const PROMPT_KEY = 'casey_v2_turn';
 
 const BUDGET_NOTE = (calls, secs) =>
@@ -319,14 +320,27 @@ async function runTurn(db, {
   const fail = (status, message, detail) => { send({ type: 'error', status, message, ...(detail ? { detail } : {}) }); return { ok: false, error: { status, message, detail } }; };
   const store = async (role, content, meta) => { const r = await chats.appendMessage(db, chat.id, role, content, meta); stored.push(r.id); lastSeq = r.seq; return r; };
 
+  // ---- The history: loaded BEFORE the stream begins, so a chat that has outgrown the context window is a plain 409
+  // (the claim is released in finally; nothing is stored) rather than a model error on every turn (S3c size guard).
+  let rows;
+  let chatChars = 0;
+  try {
+    rows = await chats.loadMessages(db, chat.id, { thinkingFloorSeq: floorSeq });
+    chatChars = rows.reduce((n, m) => n + JSON.stringify(m.content).length, 0);
+    if (chatChars > MAX_CHAT_CHARS) throw spend.httpError(409, `This chat is too long to continue (${chatChars.toLocaleString('en-US')} characters stored; the limit is ${MAX_CHAT_CHARS.toLocaleString('en-US')}). Start a new chat.`);
+  } catch (e) {
+    if (created) { try { await chats.deleteChat(db, chat.id, userId); } catch (_) { /* best effort */ } }   // no empty chat lingers (as rollbackIfOpening did when the load ran after begin)
+    else { try { await chats.releaseTurn(db, chat.id); } catch (_) { /* best effort */ } }
+    if (outcomeCard) { try { await cards.revertResume(db, outcomeCard.id, userId, outcomePrev); } catch (_) { /* best effort */ } }
+    throw e;
+  }
   try {
     begin();
     heartbeat = heartbeatMs > 0 ? setInterval(() => send({ type: 'heartbeat' }), heartbeatMs) : null;
     if (heartbeat && heartbeat.unref) heartbeat.unref();
     send({ type: 'chat', id: chat.id, title: chat.title, model: chat.model, effort: chat.effort, created, prompt_version: sig });
 
-    // ---- The history + this turn's user message ----
-    const rows = await chats.loadMessages(db, chat.id, { thinkingFloorSeq: floorSeq });
+    // ---- This turn's user message ----
     const history = rows.map((m) => ({ role: m.role, content: m.content }));
     const orphans = orphanToolUses(rows);
     const cb = contextBlock({ auth, headers: ctx.headers, now: now(), context: sanitizeContext(context) });
@@ -458,7 +472,7 @@ async function runTurn(db, {
   function finish(row, answerText, extra = {}) {
     const body = {
       chat_id: chat.id, message_id: row.id, seq: row.seq, text: answerText, usage, cost_cents: Math.round(cost * 10000) / 10000,
-      calls, tool_calls: toolCalls, limited, stopped: false, card_id: null, ms: Date.now() - started, model: chat.model, effort: chat.effort, prompt_version: sig, ...extra,
+      calls, tool_calls: toolCalls, limited, stopped: false, card_id: null, chat_chars: chatChars, max_chat_chars: MAX_CHAT_CHARS, ms: Date.now() - started, model: chat.model, effort: chat.effort, prompt_version: sig, ...extra,
     };
     send({ type: 'final', body });
     return { ok: true, final: body };
@@ -481,6 +495,6 @@ async function runTurn(db, {
 
 module.exports = {
   runTurn, contextBlock, pageLine, sanitizeContext, stripThinking, orphanToolUses, settingModel, settingModels, settingModelNotes, modelMenu, settingEffort,
-  MODELS, MODEL_LABELS, NOTE_MAX, DEFAULT_MODEL, EFFORTS, DEFAULT_EFFORT, MAX_TOOL_CALLS, MAX_TURN_MS, MAX_TOKENS, MAX_TOKENS_RETRY, HEARTBEAT_MS, CALL_TIMEOUT_FLOOR_MS, TEXT_MAX, PROMPT_KEY,
+  MODELS, MODEL_LABELS, NOTE_MAX, DEFAULT_MODEL, EFFORTS, DEFAULT_EFFORT, MAX_TOOL_CALLS, MAX_TURN_MS, MAX_TOKENS, MAX_TOKENS_RETRY, HEARTBEAT_MS, CALL_TIMEOUT_FLOOR_MS, TEXT_MAX, MAX_CHAT_CHARS, PROMPT_KEY,
   BUDGET_NOTE, CUT_NOTE, DECLINED_NOTE, BUDGET_STOP_NOTE, EMPTY_NOTE, STOPPED_NOTE, CONTINUE_TEXT, CONTEXT_MAX, INTERRUPTED_RESULT, ONE_CARD_RESULT, FIRM_TZ,
 };

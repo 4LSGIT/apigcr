@@ -55,3 +55,8 @@ test('edge bodies: none, not JSON, an array, an empty object, a bare object pass
   expect(contentFor({ method: 'POST', path: '/api/tasks', body: '{}' })).toEqual({ kind: 'fields', fields: [{ label: 'Body', value: '{} (empty object)' }] });
   expect(contentFor({ method: 'POST', path: '/api/tasks', body: { title: 'obj' } })).toEqual({ kind: 'fields', fields: [{ label: 'title', value: 'obj' }] });
 });
+
+test('S3c: a `$N.field` reference in a body reads as "filled from step N\'s answer … not known yet"; a $ inside text is text', () => {
+  const c = contentFor({ method: 'PATCH', path: '/api/tasks/$1.task_id', body: '{"title":"$1.title","note":"costs $5","id":"$1.rows.0.id"}' });
+  expect(c.fields).toEqual([{ label: 'title', value: "$1.title — filled from step 1's answer (title) when it runs; not known yet" }, { label: 'note', value: 'costs $5' }, { label: 'id', value: "$1.rows.0.id — filled from step 1's answer (rows.0.id) when it runs; not known yet" }]);
+});

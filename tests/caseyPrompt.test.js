@@ -14,7 +14,7 @@ const loop = require('../services/casey/loop');
 const aiService = require('../services/aiService');
 
 test('version pinned; the text is built once and byte-identical; the schema context and the rules are in it', () => {
-  expect(prompt.VERSION).toBe('v2.2');   // S3b: api_write and the card protocol
+  expect(prompt.VERSION).toBe('v2.3');   // S3c: references between a card's steps
   const a = prompt.systemText();
   const b = prompt.systemText();
   expect(a).toBe(b);
@@ -25,7 +25,7 @@ test('version pinned; the text is built once and byte-identical; the schema cont
     'contact_kind', 'case_relate_type', 'ONLY_FULL_GROUP_BY', 'truncated: true',
     'tie for that place', 'Page line',
     // S3b: writes are PROPOSED as cards, never run by Casey; the outcome protocol; refusals and declines
-    'api_write', 'card the user approves', 'turn ENDS', 'WRITTEN BY THE APP', 'DECLINED by the user', 'NOT ACTED ON', 'RECORD DATA', 'Read that block before answering', '"$1.id"', 'A DECLINED card means no', 'is not a refusal']) {
+    'api_write', 'card the user approves', 'turn ENDS', 'WRITTEN BY THE APP', 'DECLINED by the user', 'NOT ACTED ON', 'RECORD DATA', 'Read that block before answering', '"$1.task_id"', 'can never be filled in', 'A DECLINED card means no', 'is not a refusal']) {
     expect(a).toContain(must);
   }
   expect(a).not.toContain('READ-ONLY');   // S3a's read-only statement is gone with S3b
@@ -44,7 +44,7 @@ test('generic: Casey\'s own text names no firm or person (the manifest\'s exampl
 test('signature(tools): stable across calls, changes with the tool definitions or the text', () => {
   const defs = tools.definitions();
   const s1 = prompt.signature(defs);
-  expect(s1).toMatch(/^v2\.2-[0-9a-f]{8}$/);
+  expect(s1).toMatch(/^v2\.3-[0-9a-f]{8}$/);
   expect(prompt.signature(tools.definitions())).toBe(s1);
   const altered = defs.map((d, i) => (i === 0 ? { ...d, description: d.description + ' ' } : d));
   expect(prompt.signature(altered)).not.toBe(s1);

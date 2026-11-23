@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-23T07:20:20.761Z
+-- Generated: 2026-11-23T12:13:40.028Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:468d6dcae12d3cd997e1b54853510df2
+-- Fingerprint: sha256:a5cad4239ffa7a0e2dda8e67c5ed4d4a
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -815,8 +815,10 @@ CREATE TABLE `casey_card_steps` (
   `card_id` bigint unsigned NOT NULL,
   `step_no` tinyint NOT NULL COMMENT 'Position on the card, from 1. Steps are claimed in order: step N is claimable only when every earlier step is applied.',
   `method` varchar(8) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'POST, PUT, PATCH or DELETE (a card never carries a GET).',
-  `path` varchar(2000) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'The concrete path the browser calls, query string included — the route lib/routeCatalog.findRoute matched at proposal time was proposable (lib/caseySensitivity) and allowed for this user.',
-  `body` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin COMMENT 'The request body as JSON TEXT — the EXACT bytes the browser sends (apiSend takes a string body as is), so what the card shows is byte-for-byte what the route receives. NULL for a step without a body.',
+  `path` varchar(2000) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'The path as proposed, query string included: concrete, or a template with $N.field reference segments standing for route parameters (S3c). At proposal the route it reaches — by dispatch, or by structure for a template — was proposable (lib/caseySensitivity) and allowed for this user; a template''s resolved path must dispatch to that same route at claim (path_sent).',
+  `body` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin COMMENT 'The request body as JSON TEXT as proposed — the EXACT bytes the browser sends (apiSend takes a string body as is) unless it carries $N.field references, which the claim resolves into body_sent (then THAT is what is sent). What the card shows is byte-for-byte what the route receives. NULL for a step without a body.',
+  `path_sent` varchar(2000) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'The concrete path the browser was handed at claim, after every $N.field reference in `path` was replaced from an earlier step''s stored (redacted) result. NULL when the path carried no reference — then `path` is what was sent.',
+  `body_sent` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin COMMENT 'The request body as JSON TEXT the browser was handed at claim, after every $N.field reference in `body` was replaced — the exact bytes sent. NULL when the body carried no reference — then `body` is what was sent. A reference that cannot be resolved (the earlier step not applied, the field missing, or its value [redacted]) fails the step before anything is sent (status failed, result {error:UNRESOLVED}).',
   `tier` tinyint NOT NULL COMMENT 'This step''s own lib/caseySensitivity tier (the card''s tier is the max).',
   `purpose` varchar(300) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'The model''s one line on why this step (shown on the card).',
   `status` enum('pending','claimed','applied','failed','declined','skipped') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending' COMMENT 'pending: not yet run. claimed: the browser took the claim and is about to send (POST /api/casey/cards/:id/claim) — a step still claimed when the card is resumed is reported to the model as UNKNOWN (the request may have landed; it is never re-sent automatically). applied: the route answered 2xx. failed: the route answered an error (http_status). declined: the card was declined while this step was pending. skipped: the card was resumed while this step was still pending (an earlier step failed, or the user stopped).',

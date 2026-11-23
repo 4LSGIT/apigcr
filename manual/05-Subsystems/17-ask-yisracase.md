@@ -40,10 +40,14 @@ for a change — create a task, send a message, update a record — it proposes 
 ordinary write the details sit under **Details**; for a sensitive one (a send,
 a delete) the content is shown open with a warning, and a superuser action is
 labelled as such (your password may be asked for, as on the admin pages).
-Read the content, not just the summary — the content is what is sent. Click
+Read the content, not just the summary — the content is what is sent. A
+later step may use something an earlier step produced (the id of a record the
+first step creates, say): the card shows it as `$1.task_id` until the step
+runs, then shows exactly what was sent. Click
 **Approve** to run the steps, in order, as yourself (each step shows applied or
 failed; a later step is not run after a failure), or **Decline**, optionally
-telling Casey why. Either way Casey is told exactly what happened and answers;
+telling Casey why. Closing the tab while Casey is still working stops it after
+the step in hand; a very long chat is refused with a note to start a new one. Either way Casey is told exactly what happened and answers;
 typing another message instead counts as declining. If a card from an earlier
 visit is still waiting, reopen the chat: a card you never answered can still
 be approved or declined; one that ran partway offers **Continue** or **Stop

@@ -2758,9 +2758,14 @@ edge; position-only loss, accepted.
   than substitute the literal. Under a `headers` map only credential-named
   entries are blanked; a header whose name merely contains "key" (an echoed
   `Idempotency-Key`) is blanked too — accepted.
-- **Casey v2 S3b follow-ups** (2026-11-23): S3c takes `$N.field`
-  substitution between a card's steps (api_write refuses a reference today —
-  two cards), an abort on client disconnect, and the chat size guard. Optional
+- **Casey v2 S3c follow-ups** (2026-11-23): a long chat is REFUSED past
+  `MAX_CHAT_CHARS` (start a new one); a summarise-and-continue (compaction
+  into a fresh chat seeded with a summary) is the next step if users hit it.
+  A reference resolves only a scalar; a step that needs a whole object from an
+  earlier answer (an array of ids) still takes two cards.
+- **Casey v2 S3b follow-ups** (2026-11-23): S3c landed `$N.field`
+  references between a card's steps, the abort on client disconnect and the
+  chat size guard. Optional
   hardening: wire `Idempotency-Key` on the four proposable sends that lack it
   (`POST /api/campaigns/test-send`, `POST /api/compose-docs-message`, the SU
   `POST /api/cta/:id/send` and `POST /api/phone-lines/admin/:id/test-sms`,

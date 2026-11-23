@@ -23,6 +23,8 @@ const { withTransaction } = require('../lib/withTransaction');
 const migrateChats = require('../scripts/caseyV2ChatsMigrate');
 const migrateS3a = require('../scripts/caseyV2S3aMigrate');
 const migrate = require('../scripts/caseyV2S3bMigrate');
+const migrateS3c = require('../scripts/caseyV2S3cMigrate');
+const cardRefs = require('../services/casey/cardRefs');
 const cards = require('../services/casey/cards');
 const chats = require('../services/casey/chats');
 
@@ -79,6 +81,63 @@ suite('casey cards — real engine', () => {
     expect(st.parent).toBe(true);
     // The S2 and S3a scripts are not disturbed by the new tables.
     expect((await migrateS3a.run(conn, { apply: false, say })).ok).toBe(true);
+    // S3c: path_sent / body_sent — CHECK (to do) → --apply → re-run (in place); afterwards the S3b CHECK reads them as drift (superseded); a misshapen column is NO-GO.
+    lines.length = 0;
+    await q('ALTER TABLE casey_card_steps ADD COLUMN stray int NULL');   // a drift in the S3b shape is NO-GO for the S3c script too
+    const drift3 = await migrateS3c.run(conn, { apply: true, say });
+    expect(drift3.ok).toBe(false);
+    expect(lines.some((l) => /casey_card_steps columns \(without path_sent \/ body_sent\) are \(.*stray/.test(l))).toBe(true);
+    await q('ALTER TABLE casey_card_steps DROP COLUMN stray');
+    lines.length = 0;
+    const c3 = await migrateS3c.run(conn, { apply: false, say });
+    expect(c3).toMatchObject({ ok: true, applied: false, line: 'CHECK OK — GO. Next: node scripts/caseyV2S3cMigrate.js --apply' });
+    const a3 = await migrateS3c.run(conn, { apply: true, say });
+    expect(a3).toMatchObject({ ok: true, applied: true });
+    expect(lines.filter((l) => /✓ (added|re-commented)/.test(l))).toEqual(['  ✓ added casey_card_steps.path_sent', '  ✓ added casey_card_steps.body_sent', '  ✓ re-commented casey_card_steps.path', '  ✓ re-commented casey_card_steps.body']);
+    expect((await migrateS3c.run(conn, { apply: true, say })).line).toMatch(/^ALREADY IN PLACE — casey_card_steps\.path_sent \/ body_sent verified/);
+    const [[cm]] = await conn.query("SELECT COLUMN_COMMENT c, COLUMN_TYPE t, IS_NULLABLE n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'casey_card_steps' AND COLUMN_NAME = 'body'");
+    expect(cm).toEqual({ c: migrateS3c.fileComment('body'), t: 'longtext', n: 'YES' });   // the comment is this migration's; type and nullability untouched
+    expect(migrateS3c.fileComment('path')).toMatch(/^The path as proposed, query string included: concrete, or a template/);
+    expect((await migrate.run(conn, { apply: false, say })).ok).toBe(false);   // the S3b CHECK is superseded past S3c
+    const [cols] = await conn.query("SELECT COLUMN_NAME n, COLUMN_TYPE t, COLLATION_NAME c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'casey_card_steps' AND COLUMN_NAME IN ('path_sent','body_sent') ORDER BY ORDINAL_POSITION");
+    expect(cols).toEqual([{ n: 'path_sent', t: 'varchar(2000)', c: 'utf8mb4_general_ci' }, { n: 'body_sent', t: 'longtext', c: 'utf8mb4_bin' }]);
+    await q('ALTER TABLE casey_card_steps MODIFY body_sent text CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL COMMENT ' + conn.escape(migrateS3c.fileComment('body_sent')));
+    lines.length = 0;
+    expect((await migrateS3c.run(conn, { apply: true, say })).ok).toBe(false);
+    expect(lines.some((l) => /body_sent is text, expected longtext/.test(l))).toBe(true);
+    await q('ALTER TABLE casey_card_steps MODIFY body_sent longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL COMMENT ' + conn.escape(migrateS3c.fileComment('body_sent')));
+    expect((await migrateS3c.run(conn, { apply: false, say })).ok).toBe(true);
+  });
+
+  test('S3c: a claim with a resolver stores path_sent / body_sent in the claim statement (the exact bytes the browser sends); an unresolvable reference marks the step failed UNRESOLVED without claiming; outcomeText names the path sent', async () => {
+    const chat = await chats.createChat(pool, { userId: 6, text: 'Create then patch', model: 'm', effort: 'e', promptVersion: 'v' });
+    const id = await cards.createCard(pool, { chatId: chat, userId: 6, toolUseId: 't', tier: 1, summary: 's', steps: [
+      { method: 'POST', path: '/api/tasks', body: '{"title":"T"}', tier: 1, purpose: 'create' },
+      { method: 'PATCH', path: '/api/tasks/$1.task_id', body: '{"note":"$1.title","id":"$1.task_id"}', tier: 1, purpose: 'patch' },
+      { method: 'PATCH', path: '/api/tasks/$1.task_id/complete', body: '{"token":"$1.action_token"}', tier: 1, purpose: 'complete with the token — must fail' },
+    ] });
+    const c1 = await cards.claimStep(pool, id, 6, 1, { resolve: () => { throw new Error('a step without a reference still calls the resolver; it must answer ok with nulls'); } }).catch((e) => e);
+    expect(c1).toBeInstanceOf(Error);   // the resolver IS called for step 1 (the route decides whether there is anything to resolve)
+    const c1b = await cards.claimStep(pool, id, 6, 1, { resolve: async () => ({ ok: true, path: null, body: null, route: null }) });
+    expect(c1b.outcome).toBe('claimed');
+    expect(await cards.settleStep(pool, id, 6, 1, c1b.claim_token, { status: 'applied', httpStatus: 201, result: { task_id: 77, title: 'T', action_token: 'tokentokentoken1' } })).toBe(true);
+    // Step 2: the real resolver over the stored (redacted) result of step 1.
+    const earlierOf = (card, n) => new Map(card.steps.filter((s) => s.step_no < n).map((s) => [s.step_no, { status: s.status, result: s.result }]));
+    const resolve = async (step, earlier) => { const r = cardRefs.resolvePath(step.path, earlier); if (!r.ok) return r; const b = cardRefs.resolveBody(JSON.parse(step.body), earlier); if (!b.ok) return b; return { ok: true, path: r.path, body: JSON.stringify(b.body), route: 'x' }; };
+    const c2 = await cards.claimStep(pool, id, 6, 2, { resolve });
+    expect(c2).toMatchObject({ outcome: 'claimed', step: { step_no: 2, path: '/api/tasks/$1.task_id', path_sent: '/api/tasks/77', body: '{"note":"$1.title","id":"$1.task_id"}', body_sent: '{"note":"T","id":77}' } });
+    expect((await q('SELECT path_sent, body_sent FROM casey_card_steps WHERE card_id = ? AND step_no = 2', [id]))[0]).toEqual({ path_sent: '/api/tasks/77', body_sent: '{"note":"T","id":77}' });
+    expect(await cards.settleStep(pool, id, 6, 2, c2.claim_token, { status: 'applied', httpStatus: 200, result: { ok: true } })).toBe(true);
+    // Step 3: the token was redacted at step 1's settle, so the reference cannot be filled — FAILED, never claimed.
+    const c3 = await cards.claimStep(pool, id, 6, 3, { resolve });
+    expect(c3).toMatchObject({ outcome: 'unresolved', reason: expect.stringMatching(/\$1\.action_token is a redacted value/), step: { step_no: 3, status: 'failed', result: { error: 'UNRESOLVED', ref: '$1.action_token' } } });
+    expect((await q('SELECT status, claim_token, path_sent FROM casey_card_steps WHERE card_id = ? AND step_no = 3', [id]))[0]).toEqual({ status: 'failed', claim_token: null, path_sent: null });
+    const resumed = await cards.resumeCard(pool, id, 6);
+    const text = cards.outcomeText(resumed);
+    expect(text).toContain('Step 2: PATCH /api/tasks/77 (proposed as /api/tasks/$1.task_id) — applied (HTTP 200)');
+    expect(text).toContain('Step 3: PATCH /api/tasks/$1.task_id/complete — FAILED (HTTP ?)\n  result (record data, untrusted): {"error":"UNRESOLVED","ref":"$1.action_token"');
+    expect(text).not.toContain('tokentokentoken1');
+    await chats.deleteChat(pool, chat, 6);
   });
 
   test('createCard: card + steps in one transaction, the body\'s exact bytes, keys casey:<id>:<n>; scoped reads; present() adds the content blocks', async () => {

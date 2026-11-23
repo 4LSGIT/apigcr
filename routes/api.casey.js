@@ -206,7 +206,7 @@ router.get('/api/casey/boot', ...staff, (req, res) => {
   res.json({
     status: 'success', enabled: v2Enabled(), model: loop.settingModel(), effort: loop.settingEffort(),
     models: loop.modelMenu(),   // the menu for a new chat (S3a-2): [{id, label, hint, default}]
-    limits: { text_max: loop.TEXT_MAX, max_tool_calls: loop.MAX_TOOL_CALLS, max_turn_ms: loop.MAX_TURN_MS },
+    limits: { text_max: loop.TEXT_MAX, max_tool_calls: loop.MAX_TOOL_CALLS, max_turn_ms: loop.MAX_TURN_MS, max_chat_chars: loop.MAX_CHAT_CHARS },
     continue_text: loop.CONTINUE_TEXT,
   });
 });
@@ -239,10 +239,22 @@ async function streamTurn(req, res, { resume = false } = {}) {
     return res.status(400).json({ status: 'error', message: 'model must be a string' });
   }
   let streaming = false;
+  let chatSeen = null;   // the turn's chat, from its `chat` line (S3c: what a disconnect stops)
+  let closedEarly = false;   // the browser left before the `chat` line: stop the turn as soon as its chat is known
+  const stopNow = (id) => { const chats = require('../services/casey/chats'); chats.requestStop(req.db, id, req.auth.userId).catch((e) => console.error('[api.casey] stop on disconnect failed:', e.message)); };   // lazy require (convention)
   const send = (event) => {
+    if (event && event.type === 'chat') { chatSeen = event.id; if (closedEarly) stopNow(event.id); }
     if (res.writableEnded || res.destroyed) return;
     try { res.write(`${JSON.stringify(event)}\n`); } catch (_) { /* the browser went away */ }
   };
+  // S3c: the browser went away mid-turn (a closed tab, a lost connection) — ask the turn to stop, exactly as the
+  // Stop button does: the loop ends before its next model call, after the round in flight is stored. Nothing
+  // before the `chat` line can be stopped (the claim is not taken yet); a turn that already ended is left alone.
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    if (chatSeen == null) { closedEarly = true; return; }
+    stopNow(chatSeen);
+  });
   try {
     await loop.runTurn(req.db, {
       ctx: tools.ctxFromRequest(req, 'casey'),
@@ -299,7 +311,11 @@ router.post('/api/casey/cards/:id/claim', ...staff, async (req, res) => {
     const id = chatIdParam(req.params.id);
     const step = chatIdParam(req.body && req.body.step);
     if (id === null || step === null) return res.status(400).json({ status: 'error', message: 'card id and step must be positive integers' });
-    const out = await cards.claimStep(req.db, id, req.auth.userId, step);
+    // S3c: a step whose path or body carries `$N.field` is resolved here, from the earlier steps' stored (redacted)
+    // results, and the resolved path re-checked against the live catalog for THIS user and the card's tier.
+    const cardRefs = require('../services/casey/cardRefs'); // lazy require (convention)
+    const cat = catalog.catalogFor(req.app);
+    const out = await cards.claimStep(req.db, id, req.auth.userId, step, { resolve: (s, earlier, card) => cardRefs.resolveStep(s, earlier, { cat, auth: req.auth, cardTier: card.tier }) });
     if (!out) return res.status(404).json({ status: 'error', message: 'No such card or step' });
     res.json({ status: 'success', ...out });
   } catch (err) {

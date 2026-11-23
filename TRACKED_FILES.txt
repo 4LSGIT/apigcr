@@ -699,6 +699,7 @@ ref/migrations/2026-11-20_support_reply_columns.sql
 ref/migrations/2026-11-22_casey_v2_chats.sql
 ref/migrations/2026-11-22_casey_v2_s3a_stop.sql
 ref/migrations/2026-11-23_casey_v2_s3b_cards.sql
+ref/migrations/2026-11-23_casey_v2_s3c_sent.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -900,6 +901,7 @@ scripts/caseyP5Ledger.js
 scripts/caseyV2ChatsMigrate.js
 scripts/caseyV2S3aMigrate.js
 scripts/caseyV2S3bMigrate.js
+scripts/caseyV2S3cMigrate.js
 scripts/cfCourtBackfill.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
@@ -1125,6 +1127,7 @@ services/campaignSegmentService.js
 services/campaignService.js
 services/caseEventService.js
 services/caseService.js
+services/casey/cardRefs.js
 services/casey/cards.js
 services/casey/chats.js
 services/casey/loop.js
@@ -1391,6 +1394,7 @@ tests/caseyApiWrite.test.js
 tests/caseyApptConfirm.mysql.test.js
 tests/caseyApptConfirm.test.js
 tests/caseyCardContent.test.js
+tests/caseyCardRefs.test.js
 tests/caseyCards.mysql.test.js
 tests/caseyCardsSettle.test.js
 tests/caseyCaseContacts.mysql.test.js

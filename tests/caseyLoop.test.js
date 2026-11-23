@@ -877,9 +877,9 @@ describe('S3b cards', () => {
     await turn({ converse: model([reply([W('t2')], 'tool_use')]) });
     const c = await cards.claimStep(db, 1, 6, 1); await cards.settleStep(db, 1, 6, 1, c.claim_token, { status: 'applied', httpStatus: 200, result: 1 });
     mockStore.loadFails = true;
-    const r = await turn({ converse: model([]), text: '', chatId: 1, cardId: 1 });
-    mockStore.loadFails = false;
-    expect(r.res).toMatchObject({ ok: false, rolled_back: true });
+    try { await expect(turn({ converse: model([]), text: '', chatId: 1, cardId: 1 })).rejects.toThrow('db gone'); }   // S3c: the history loads BEFORE the stream (the size guard), so the failure is a plain throw — the route answers JSON
+    finally { mockStore.loadFails = false; }
+    expect(mockStore.chats.get(1).running_since).toBeNull();   // the claim is released
     expect(mockStore.messages.get(1)).toHaveLength(3);
     expect(await cards.getCard(db, 1, 6)).toMatchObject({ status: 'approved', steps: [{ status: 'applied' }] });   // open again
     const converse = model([reply([T('ok')])]);
@@ -895,5 +895,31 @@ describe('S3b cards', () => {
     const row = mockStore.messages.get(1)[2];
     expect(row.content.map((b) => b.type)).toEqual(['tool_result']);   // no budget text block: the outcome message is the next prompt
     expect(row.meta.budget_note).toBeUndefined();
+  });
+});
+
+describe('S3c', () => {
+  test('a load failure on a NEW chat (before the stream) removes the empty chat, as the old rollback did', async () => {
+    mockStore.loadFails = true;
+    try { await expect(turn({ converse: model([]), text: 'hello' })).rejects.toThrow('db gone'); }
+    finally { mockStore.loadFails = false; }
+    expect(mockStore.chats.size).toBe(0);
+  });
+  test('the chat size guard: a chat whose stored history is over MAX_CHAT_CHARS is refused with a 409 BEFORE the stream (nothing stored, the claim released, an open card reverted); under it the final reports chat_chars', async () => {
+    const first = await turn({ converse: model([reply([T('hi')])]), text: 'hello' });
+    expect(first.res.final).toMatchObject({ chat_chars: 0, max_chat_chars: loop.MAX_CHAT_CHARS });   // a new chat: no history yet
+    const { res } = await turn({ converse: model([reply([T('again')])]), text: 'and', chatId: 1 });
+    expect(res.final.chat_chars).toBeGreaterThan(0);   // the two stored rows of the first turn
+    // Pad the stored history past the limit.
+    mockStore.messages.get(1).push({ id: 999, seq: 3, role: 'user', content: [T('x'.repeat(loop.MAX_CHAT_CHARS))], meta: null });
+    await expect(turn({ converse: model([]), text: 'more', chatId: 1 })).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/too long to continue .* Start a new chat/) });
+    expect(mockStore.chats.get(1).running_since).toBeNull();
+    expect(mockStore.messages.get(1)).toHaveLength(5);   // the four rows of the two turns and the padding: nothing new was stored
+    // An open card on such a chat: the plain turn resolved it, then was refused — the card is open again.
+    mockStore.messages.get(1).pop();
+    await turn({ converse: model([reply([TU('w', 'api_write', { summary: 'Write it', steps: [{ method: 'POST', path: '/api/_casey_loop/write', body: { a: 1 }, purpose: 'p' }] })], 'tool_use')]), chatId: 1, text: 'card' });
+    mockStore.messages.get(1).push({ id: 998, seq: 99, role: 'user', content: [T('x'.repeat(loop.MAX_CHAT_CHARS))], meta: null });
+    await expect(turn({ converse: model([]), text: 'never mind', chatId: 1 })).rejects.toMatchObject({ status: 409 });
+    expect(await cards.getCard(db, 1, 6)).toMatchObject({ status: 'proposed', decline_note: null });
   });
 });

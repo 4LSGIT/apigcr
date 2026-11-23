@@ -27,6 +27,19 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S3c — references, abort on disconnect, size guard (11-23):**
+  `services/casey/cardRefs.js`: a WHOLE value `$N.path` in a later step's
+  body, or a whole path segment, is filled in at CLAIM from the earlier
+  step's stored (redacted) result — never a `[redacted]` value, never an
+  object; the resolved path is re-checked against the catalog for the user
+  and the card's tier; what was sent is stored as `casey_card_steps.path_sent`
+  / `body_sent` (migration `2026-11-23_casey_v2_s3c_sent.sql`, script
+  `scripts/caseyV2S3cMigrate.js`); an unresolvable reference fails the step
+  before anything is sent. A client disconnect after the `chat` line calls
+  `requestStop` (the turn ends after the round in flight). The history loads
+  before the stream; past `loop.MAX_CHAT_CHARS` (600k) the turn is a 409
+  "start a new chat"; `final.chat_chars`. Prompt v2.3. Design §9 S3c.
+
 - **Casey v2 S3b-2 — bearers never reach the model (11-23):**
   `lib/caseyRedact.js` `redact(value)` — values under a bearer-shaped key
   (…token, …secret, password, api_key, authorization, cookie, jwt, otp;

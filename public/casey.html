@@ -263,7 +263,7 @@ function renderCardInto(el, card) {
   const steps = card.steps.map((s) => {
     const status = s.status === 'claimed' && !el.dataset.running ? 'unknown' : s.status;
     const fields = `<dl class="fields">${(s.content && s.content.fields || []).map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}</dd>`).join('')}</dl>`;
-    const json = `<pre>${esc(s.body == null ? '(no request body)' : s.body)}</pre>`;
+    const json = `<pre>${esc(s.body == null ? '(no request body)' : s.body)}</pre>` + ((s.path_sent && s.path_sent !== s.path) || (s.body_sent != null && s.body_sent !== s.body) ? `<div class="why">Sent as: ${esc(s.method)} ${esc(s.path_sent || s.path)}</div>${s.body_sent != null ? `<pre>${esc(s.body_sent)}</pre>` : ''}` : '');   // S3c: what the references resolved to
     const details = open
       ? `${fields}<details><summary>Request JSON (what is sent, byte for byte)</summary>${json}</details>`
       : `<details><summary>Details</summary>${fields}${json}</details>`;
@@ -339,13 +339,15 @@ async function runCard(el, card) {
       let claim;
       try { claim = await P.apiSend(`/api/casey/cards/${card.id}/claim`, 'POST', { step: s.step_no }); }
       catch (err) { note(`Could not claim step ${s.step_no}: ${(err && err.message) || 'request failed'}. Nothing was sent for it.`); stop = true; claimStopped = true; break; }
+      if (claim.outcome === 'unresolved') { note(`Step ${s.step_no} could not be filled in: ${claim.reason}. Nothing was sent for it.`); stop = true; break; }   // S3c: a $N.field reference failed — the step is failed server-side; the resume tells Casey
       if (claim.outcome !== 'claimed') { stop = true; claimStopped = true; break; }   // applied elsewhere, unknown (another tab holds it), closed, out of order: show the card as it stands, resume nothing
       const row = el.querySelector(`.cstep[data-step="${s.step_no}"]`); if (row) { row.className = 'cstep claimed'; row.querySelector('.st').innerHTML = `<i class="${STEP_ICON.claimed}"></i>`; }
       const step = claim.step;
       let settle = null;
       try {
         // responseType 'response' gives the route's real status (a 201 is a 201); apiSend hands back null for a 204 before that point.
-        const res = await P.apiSend(step.path, step.method, step.body == null ? null : step.body, { 'Idempotency-Key': step.idempotency_key }, { responseType: 'response' });
+        const sendPath = step.path_sent || step.path, sendBody = step.body_sent != null ? step.body_sent : step.body;   // S3c: a $N.field reference was filled in by the server at claim
+        const res = await P.apiSend(sendPath, step.method, sendBody == null ? null : sendBody, { 'Idempotency-Key': step.idempotency_key }, { responseType: 'response' });
         if (res === null) settle = { status: 'applied', http_status: 204, result: null };
         else { let text = ''; try { text = await res.text(); } catch (_) {} let result = null; try { result = text ? JSON.parse(text) : null; } catch (_) { result = text; } settle = { status: 'applied', http_status: res.status, result }; }
         // The sync bus (public/js/yc-sync.js): apiSend's 'response' path returns BEFORE the shell's own sniff, so a card's
@@ -554,7 +556,7 @@ async function streamTurn(body, { resume = false, cardEl = null } = {}) {
   running = true; stopPending = false; turnClaimed = false; sendBtn.disabled = true; stopBtn.hidden = false;
   if (cardEl) { const a = cardEl.querySelector('.actions'); if (a) a.remove(); }
   const trail = newTrail();
-  let answer = null, answerText = '', sawFinal = false;
+  let answer = null, answerText = '', sawFinal = false, tooLong = false;
   const closedHere = [];   // the cards this plain turn painted as resolved (N-d: a rollback re-opens them server-side)
   const ctx = contextOn ? captureContext() : null;
   const isNew = !chatId;
@@ -577,6 +579,7 @@ async function streamTurn(body, { resume = false, cardEl = null } = {}) {
         if (!answer) answer = addAssistant('', { streaming: true });
         const bits = [`${b.calls} tool call${b.calls === 1 ? '' : 's'}`, fmtMs(b.ms), fmtCents(b.cost_cents)];
         if (b.stopped) bits.push('stopped'); if (b.limited) bits.push('tool budget reached');
+        if (b.max_chat_chars && b.chat_chars > 0.8 * b.max_chat_chars) bits.push('this chat is getting long — start a new one soon');   // S3c: the size guard refuses the turn past the limit
         finishAssistant(answer, b.text, bits.filter(Boolean).join(' · '));
         if (b.limited && !b.stopped) keepGoingButton(answer);
       }
@@ -591,10 +594,11 @@ async function streamTurn(body, { resume = false, cardEl = null } = {}) {
   } catch (err) {
     // A pick the server no longer allows (the firm's menu changed since this pane booted): say so and re-read the menu.
     const menuChanged = !turnClaimed && isNew && err && err.status === 400 && err.message === MENU_REFUSAL;   // the loop's exact words (services/casey/loop.js), pinned in tests/caseyLoop.test.js
+    tooLong = !!(err && err.status === 409 && /too long to continue/.test(err.message || ''));   // the size guard (S3c): nothing more can be sent on this chat
     addAssistant(menuChanged ? 'The model menu changed since this pane opened — pick again.' : (err && err.message ? err.message : 'The request failed'), { error: true });
     if (menuChanged) { try { boot = await P.apiSend('/api/casey/boot'); } catch (_) { /* keep the old menu */ } renderModelMenu(); setChip(boot ? boot.model : ''); showModelControl(); }
   } finally {
-    if (cardEl && cardEl.dataset.cardId) refreshCard(cardEl, cardEl.dataset.cardId);   // resumed (no buttons) after a good run; its buttons back after a failed one, so the resume can be retried
+    if (cardEl && cardEl.dataset.cardId) { if (tooLong) { const a = cardEl.querySelector('.actions'); if (a) a.remove(); cardEl.insertAdjacentHTML('beforeend', '<div class="state err">This chat is too long to continue; Casey cannot be told. Start a new chat.</div>'); } else refreshCard(cardEl, cardEl.dataset.cardId); }   // resumed (no buttons) after a good run; its buttons back after a failed one, so the resume can be retried — unless the chat itself is closed
     else if (!resume && closedHere.length && !sawFinal) for (const el of closedHere) refreshCard(el, el.dataset.cardId);   // a plain turn accepted, then rolled back before its final: the server re-opened the card — show it as it is
     stopPending = false; stopBtn.hidden = true;
     const think = trail.querySelector('.think:last-child'); if (think) think.dataset.closed = '1';

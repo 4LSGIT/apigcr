@@ -167,6 +167,14 @@ describe('the lists are exact snapshots — a change is a deliberate review', ()
       '^POST \\/api\\/hooks\\/:id\\/duplicate$',   // S3b: a card's result reaches the model; the new hook's targets carry their headers verbatim
     ]);
   });
+  test('send paths (S3c: no reference on a card step that sends)', () => {
+    expect(S.SEND_PATHS.map(r => r.source)).toEqual([
+      '^\\/api\\/mail\\/send(\\/|$)', '^\\/api\\/phone-lines\\/[^/]+\\/sms$', '^\\/api\\/phone-lines\\/admin\\/[^/]+\\/test-sms$', '^\\/api\\/esign\\/send(-from-template)?$',
+      '^\\/api\\/campaigns\\/test-send$', '^\\/api\\/cta\\/[^/]+\\/send$', '^\\/internal\\/(sms|mms|email)\\/send$',
+    ]);
+    for (const p of ['/api/mail/send', '/api/mail/send/schedule', '/api/phone-lines/:id/sms', '/api/esign/send-from-template', '/api/campaigns/test-send', '/api/cta/:id/send']) expect([p, S.isSendPath(p)]).toEqual([p, true]);
+    for (const p of ['/api/tasks', '/api/compose-docs-message', '/api/phone-lines/:id/calls', '/api/mail/messages/:id']) expect([p, S.isSendPath(p)]).toEqual([p, false]);
+  });
   test('never auto GET', () => {
     expect(S.NEVER_AUTO_GET.map(r => r.source)).toEqual([
       '^(GET|HEAD) \\/api\\/credentials(\\/|$)', '^(GET|HEAD) \\/api\\/api-keys(\\/|$)', '^(GET|HEAD) \\/api\\/readonly-keys(\\/|$)',
@@ -177,6 +185,6 @@ describe('the lists are exact snapshots — a change is a deliberate review', ()
     ]);
   });
   test('lists are frozen', () => {
-    for (const l of [S.T2_WORDS, S.NEVER_PROPOSABLE, S.SECRET_RETURNING, S.NEVER_AUTO_GET]) expect(Object.isFrozen(l)).toBe(true);
+    for (const l of [S.T2_WORDS, S.NEVER_PROPOSABLE, S.SECRET_RETURNING, S.NEVER_AUTO_GET, S.SEND_PATHS]) expect(Object.isFrozen(l)).toBe(true);
   });
 });

@@ -804,3 +804,45 @@ test('S3b-2: a route ERROR body over 200 KB is trimmed too, so the failed settle
   expect(settle.result.result.message).toBe('bad');
   expect(new TextEncoder().encode(JSON.stringify(settle.result)).length).toBeLessThan(150001);
 });
+
+test('S3c: a claim answered `unresolved` stops the run with a note (the step is failed server-side) and the card is resumed; a step the server resolved is sent as resolved and shown as "Sent as"; a long chat gets the hint', async () => {
+  const card = CARD({ id: 80, steps: [STEP({ idempotency_key: 'casey:80:1' }), STEP({ step_no: 2, method: 'PATCH', path: '/api/tasks/$1.task_id', body: '{"note":"$1.title"}', idempotency_key: 'casey:80:2' }), STEP({ step_no: 3, method: 'PATCH', path: '/api/tasks/$1.task_id/complete', body: '{"token":"$1.action_token"}', idempotency_key: 'casey:80:3' })] });
+  const routeCalls = [];
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(card), cardsApi: { 80: card }, resume: answer('Two of three; the third needed a redacted value.'),
+    routes: { '/api/tasks': (m, body) => { routeCalls.push([m, '/api/tasks', body]); return { __status: 201, body: { task_id: 77, title: 'T', action_token: '[redacted]' } }; }, '/api/tasks/77': (m, body) => { routeCalls.push([m, '/api/tasks/77', body]); return { ok: 1 }; } } });
+  // The fake's claim: resolve step 2 from the fake ledger; step 3 is unresolved (the token is redacted).
+  const real = p.w.__parent.apiSend;
+  p.w.__parent.apiSend = async (path, method, body, headers, opts) => {
+    if (/cards\/80\/claim/.test(path) && body.step === 2) { const r = await real(path, method, body, headers, opts); card.steps[1].path_sent = '/api/tasks/77'; card.steps[1].body_sent = '{"note":"T"}'; return { ...r, step: { ...r.step, path_sent: '/api/tasks/77', body_sent: '{"note":"T"}' } }; }
+    if (/cards\/80\/claim/.test(path) && body.step === 3) { card.steps[2].status = 'failed'; card.steps[2].result = { error: 'UNRESOLVED', ref: '$1.action_token', reason: '$1.action_token is a redacted value (a token or secret never flows into a later step)' }; return { status: 'success', outcome: 'unresolved', reason: card.steps[2].result.reason, step: card.steps[2] }; }
+    return real(path, method, body, headers, opts);
+  };
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  const el = p.d.querySelector('.card');
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(600);
+  expect(routeCalls).toEqual([['POST', '/api/tasks', '{"title":"Call","n":1}'], ['PATCH', '/api/tasks/77', '{"note":"T"}']]);   // step 2 went as RESOLVED; step 3 was never sent
+  expect(p.calls.filter((c) => /cards\/80\/settle/.test(c.p)).map((c) => c.body.step)).toEqual([1, 2]);
+  expect(el.querySelector('.state.err').textContent).toMatch(/^Step 3 could not be filled in: \$1\.action_token is a redacted value/);
+  expect(p.calls.filter((c) => c.p === '/api/casey/turn/resume').length).toBe(1);   // the failed step is the ledger's record; Casey is told
+  const steps = [...el.querySelectorAll('.cstep')];
+  expect(steps.map((s) => s.className)).toEqual(['cstep applied', 'cstep applied', 'cstep failed']);
+  expect(steps[1].textContent).toMatch(/Sent as: PATCH \/api\/tasks\/77/);                      // the resolved request, beside the template
+  expect(steps[1].querySelectorAll('pre')[1].textContent).toBe('{"note":"T"}');
+  expect(steps[0].textContent).not.toMatch(/Sent as/);                                             // no reference: nothing to show
+  expect(p.d.querySelector('.msg.assistant.md').textContent).toMatch(/^Two of three/);
+  // The long-chat hint from the final.
+  const p2 = await pane({ chats: [{ id: 8, title: 'q' }], turn: (body) => ndjson([{ type: 'chat', id: 8, title: 'q', model: 'm', created: false }, { type: 'delta', text: 'ok' }, { type: 'final', body: { chat_id: 8, text: 'ok', calls: 0, cost_cents: 0.1, ms: 500, limited: false, stopped: false, card_id: null, chat_chars: 500000, max_chat_chars: 600000 } }]) });
+  p2.E('text').value = 'hi'; p2.E('send').click(); await wait(250);
+  expect(p2.d.querySelector('.msg.assistant .meta').textContent).toMatch(/this chat is getting long — start a new one soon/);
+});
+
+test('S3c: a resume the server refuses as "too long to continue" leaves the card without buttons and says so (nothing more can be sent on that chat)', async () => {
+  const card = CARD({ id: 90, steps: [STEP({ idempotency_key: 'casey:90:1' })] });
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(card), cardsApi: { 90: card }, resume: () => { const e = new Error('This chat is too long to continue (700,000 characters stored; the limit is 600,000). Start a new chat.'); e.status = 409; throw e; }, routes: { '/api/tasks': () => ({ ok: 1 }) } });
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  const el = p.d.querySelector('.card');
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(500);
+  expect(p.d.querySelector('.msg.assistant.error').textContent).toMatch(/too long to continue/);
+  expect(el.querySelector('.actions')).toBeNull();
+  expect(el.textContent).toMatch(/This chat is too long to continue; Casey cannot be told\. Start a new chat\./);
+});

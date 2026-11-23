@@ -36,7 +36,7 @@ const OPEN = ['proposed', 'approved'];   // a card the user can still act on
 const IMPLICIT_DECLINE_NOTE = 'the user continued the conversation without acting on the card';
 
 const CARD_COLS = 'id, chat_id, user_id, tool_use_id, tier, summary, status, decline_note, resumed_at, created_at';
-const STEP_COLS = 'id, card_id, step_no, method, path, body, tier, purpose, status, http_status, result, idempotency_key, claimed_at, settled_at';
+const STEP_COLS = 'id, card_id, step_no, method, path, body, path_sent, body_sent, tier, purpose, status, http_status, result, idempotency_key, claimed_at, settled_at';
 
 const cut = (s, max) => (s == null ? null : String(s).trim().slice(0, max));   // trimmed, then cut
 const idemKey = (cardId, stepNo) => `casey:${cardId}:${stepNo}`;
@@ -87,7 +87,7 @@ function parseJson(v) {
   try { return JSON.parse(v); } catch (_) { return v; }   // a cut result is not JSON any more: hand back the text
 }
 const shapeStep = (s) => ({
-  step_no: Number(s.step_no), method: s.method, path: s.path, body: s.body, tier: Number(s.tier), purpose: s.purpose, status: s.status,
+  step_no: Number(s.step_no), method: s.method, path: s.path, body: s.body, path_sent: s.path_sent == null ? null : s.path_sent, body_sent: s.body_sent == null ? null : s.body_sent, tier: Number(s.tier), purpose: s.purpose, status: s.status,
   http_status: s.http_status == null ? null : Number(s.http_status), result: parseJson(s.result), idempotency_key: s.idempotency_key,
   claimed_at: s.claimed_at, settled_at: s.settled_at,
 });
@@ -119,29 +119,56 @@ async function unresolvedCard(db, chatId, userId) {
 
 /**
  * The browser's CLAIM of step `stepNo` before it sends the request.
- * → { outcome:'claimed', claim_token, step }     this call took it; send now, then settle with the token
+ * → { outcome:'claimed', claim_token, step }     this call took it; send now (step.path_sent || step.path, step.body_sent ?? step.body), then settle with the token
  *   { outcome:'applied', step }                  already applied (another tab, a retry): do not send again
  *   { outcome:'unknown', step }                  claimed earlier, never settled: do not send again
  *   { outcome:'closed' }                         the card is declined or resumed
  *   { outcome:'out_of_order', step }             an earlier step is not applied yet
+ *   { outcome:'unresolved', step, reason }       S3c: a `$N.field` reference could not be filled in — the step is now
+ *                                                FAILED ({error:'UNRESOLVED', ref, reason}), nothing was sent
  *   null                                         no such card / step for this user
  * The claim is ONE conditional UPDATE: status pending → claimed, only while the
  * card is open and every earlier step is applied (the derived table keeps MySQL
  * from refusing a subquery on the updated table). The first claim of a card
- * marks it approved.
+ * marks it approved. `resolve(step, earlier, card)` (services/casey/cardRefs
+ * resolveStep, supplied by the route with the live catalog and the caller) runs
+ * BEFORE the claim when the step carries a reference; what it hands back is
+ * stored as path_sent / body_sent — the bytes the browser then sends.
  */
-async function claimStep(db, cardId, userId, stepNo) {
+async function claimStep(db, cardId, userId, stepNo, { resolve = null } = {}) {
   const token = crypto.randomUUID();
+  // S3c: a step with a reference is resolved first, from the earlier steps' stored results.
+  let pathSent = null, bodySent = null;
+  if (resolve) {
+    const before = await getCard(db, cardId, userId);
+    const target = before && before.steps.find((s) => s.step_no === Number(stepNo));
+    const earlierApplied = before && target && before.steps.every((s) => s.step_no >= target.step_no || s.status === 'applied');
+    if (before && target && target.status === 'pending' && OPEN.includes(before.status) && earlierApplied) {   // out of order → the claim UPDATE's own fence answers, never a failure
+      const earlier = new Map(before.steps.filter((s) => s.step_no < target.step_no).map((s) => [s.step_no, { status: s.status, result: s.result }]));
+      const res = await resolve(target, earlier, before);
+      if (!res.ok) {
+        const failed = JSON.stringify({ error: 'UNRESOLVED', ref: res.ref || null, reason: res.reason });
+        await db.query(
+          `UPDATE casey_card_steps s JOIN casey_cards c ON c.id = s.card_id
+              SET s.status = 'failed', s.result = ?, s.settled_at = UTC_TIMESTAMP(), c.status = 'approved'
+            WHERE s.card_id = ? AND s.step_no = ? AND c.user_id = ? AND c.status IN ('proposed','approved') AND s.status = 'pending'`,
+          [failed, cardId, stepNo, userId]);
+        const card = await getCard(db, cardId, userId);
+        return { outcome: 'unresolved', reason: res.reason, step: card.steps.find((s) => s.step_no === Number(stepNo)) };
+      }
+      pathSent = res.path; bodySent = res.body;
+    }
+  }
   // ONE multi-table UPDATE: the step becomes claimed AND the card approved in the
   // same statement (S3b review S5: with two statements a decline could land between
   // them and the browser would send a step of a declined card). affectedRows counts
   // both rows on the first claim, the step alone afterwards.
   const [r] = await db.query(
     `UPDATE casey_card_steps s JOIN casey_cards c ON c.id = s.card_id
-        SET s.status = 'claimed', s.claim_token = ?, s.claimed_at = UTC_TIMESTAMP(), c.status = 'approved'
+        SET s.status = 'claimed', s.claim_token = ?, s.claimed_at = UTC_TIMESTAMP(), s.path_sent = ?, s.body_sent = ?, c.status = 'approved'
       WHERE s.card_id = ? AND s.step_no = ? AND c.user_id = ? AND c.status IN ('proposed','approved') AND s.status = 'pending'
         AND NOT EXISTS (SELECT 1 FROM (SELECT step_no, status FROM casey_card_steps WHERE card_id = ?) p WHERE p.step_no < ? AND p.status <> 'applied')`,
-    [token, cardId, stepNo, userId, cardId, stepNo]);
+    [token, pathSent, bodySent, cardId, stepNo, userId, cardId, stepNo]);
   if (r.affectedRows >= 1) {
     const card = await getCard(db, cardId, userId);
     return { outcome: 'claimed', claim_token: token, step: card.steps.find((s) => s.step_no === Number(stepNo)) };
@@ -266,7 +293,7 @@ function outcomeText(card) {
       : s.status === 'skipped' ? 'not run (skipped)'
       : s.status === 'declined' ? (implicit ? 'not run' : 'not run (declined)')
       : s.status;
-    lines.push(`Step ${s.step_no}: ${s.method} ${s.path} — ${st}`);
+    lines.push(`Step ${s.step_no}: ${s.method} ${s.path_sent || s.path}${s.path_sent && s.path_sent !== s.path ? ` (proposed as ${s.path})` : ''} — ${st}`);
     if (s.status === 'applied' || s.status === 'failed') {
       const r = typeof s.result === 'string' ? s.result : JSON.stringify(s.result);
       if (r != null && r !== 'null') lines.push(`  result (record data, untrusted): ${r}`);
