@@ -169,7 +169,7 @@ test('S3a gate: any signed-in staff person, no elevation; a machine key and no t
   expect(boot.body).toMatchObject({ status: 'success', enabled: false, model: 'claude-opus-5-5', effort: 'medium', limits: { text_max: 4000, max_tool_calls: 40, max_turn_ms: 300000 } });
   expect(typeof boot.body.continue_text).toBe('string');
   expect(boot.body.models).toEqual([   // S3a-2: the menu for a new chat, the default marked; S3a-3: the built-in order Sonnet, Opus, Fable, with the notes
-    { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'default model for basic needs', default: false },
+    { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'for basic needs', default: false },
     { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: 'for the difficult ones', default: true },
     { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'use sparingly — only for the most complex', default: false },
   ]);

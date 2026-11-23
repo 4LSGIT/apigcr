@@ -2744,9 +2744,13 @@ edge; position-only loss, accepted.
   2026-11-22): `AITEST_ENABLED=1` is set on the Cloud Run service, so the
   TEMPORARY `GET /_aitest` / `/_aitest/file` smoke routes (key-gated by
   `X-Aitest-Key`) are live — two public-class rows in the catalog. They were
-  for the aiService foundation slice and have no caller. Remove the env var
-  from the service and delete the file + its routeCatalog expectations in one
-  slice; Fred undecided as of S2.
+  for the aiService foundation slice and have no caller. Fred removed the env
+  var from the service 2026-11-23 (live `GET /_aitest` → 404, revision
+  svpcac-02257-8w9), so the routes are dark; what remains is deleting the
+  file and its expectations (`lib/routeCatalog.js`, `lib/routeFamilies.js`,
+  `tests/routeCatalog.test.js`, `scripts/updateRoutes.js`, the pre-commit
+  hook's list, the mobile-survey api-keys fixture, `lib/aiPrompts/echo.js`'s
+  mention) in one slice.
 - **Casey v2 S3b-2 follow-up** (2026-11-23): `lib/caseyRedact.js` is a
   KEY-shaped rule (token / secret / password / … as the key's last word), not
   a content scanner — a bearer handed out under another name (a column

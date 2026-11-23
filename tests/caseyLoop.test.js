@@ -640,7 +640,7 @@ describe('settings and context', () => {
     expect(loop.settingModel()).toBe('claude-sonnet-5-5');               // the setting is off the menu, Sonnet is on it
     mockSettings.models = null; mockSettings.model = 'claude-fable-5-1';
     expect(loop.modelMenu()).toEqual([
-      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'default model for basic needs', default: false },
+      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'for basic needs', default: false },
       { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: 'for the difficult ones', default: false },
       { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'use sparingly — only for the most complex', default: true },
     ]);
@@ -661,7 +661,7 @@ describe('settings and context', () => {
     const hints = () => Object.fromEntries(loop.modelMenu().map((m) => [m.id, m.hint]));
     mockSettings.notes = JSON.stringify({ 'claude-opus-5-5': '  for the hard ones  ', 'claude-fable-5-1': '', 'claude-haiku-5-5': 'x', 'claude-sonnet-5-5': 7 });
     expect(loop.settingModelNotes()).toEqual({ 'claude-opus-5-5': 'for the hard ones' });
-    expect(hints()).toEqual({ 'claude-sonnet-5-5': 'default model for basic needs', 'claude-opus-5-5': 'for the hard ones', 'claude-fable-5-1': 'use sparingly — only for the most complex' });
+    expect(hints()).toEqual({ 'claude-sonnet-5-5': 'for basic needs', 'claude-opus-5-5': 'for the hard ones', 'claude-fable-5-1': 'use sparingly — only for the most complex' });
     mockSettings.notes = '{not json';
     expect(loop.settingModelNotes()).toEqual({});
     mockSettings.notes = '["claude-opus-5-5"]';

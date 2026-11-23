@@ -93,7 +93,7 @@ const DEFAULT_MODEL = 'claude-sonnet-5-5';   // S3a (checkpoint 2026-11-22): equ
 // What the page shows for each model (the id stays the value sent back): a label and a note. The notes are
 // Fred's words (2026-11-22) and the built-in text; casey_v2_model_notes overrides them per model (settingModelNotes).
 const MODEL_LABELS = Object.freeze({
-  'claude-sonnet-5-5': Object.freeze({ label: 'Sonnet 5.5', hint: 'default model for basic needs' }),
+  'claude-sonnet-5-5': Object.freeze({ label: 'Sonnet 5.5', hint: 'for basic needs' }),
   'claude-opus-5-5': Object.freeze({ label: 'Opus 5.5', hint: 'for the difficult ones' }),
   'claude-fable-5-1': Object.freeze({ label: 'Fable 5.1', hint: 'use sparingly — only for the most complex' }),
 });
