@@ -337,7 +337,7 @@ describe('snapshots — a change here is a deliberate review', () => {
     expect(suGets.every(r => r.autoGet === false && r.tier === 3)).toBe(true);
     expect(suGets.filter(r => !r.proposable).map(at)).toEqual([
       'GET /admin/api-tester/history', 'GET /admin/api-tester/saved', 'GET /admin/api-tester/saved/:id', 'GET /admin/db/saved-queries',
-      'GET /admin/db/schema', 'GET /admin/db/schema.sql', 'GET /api/casey/catalog', 'GET /api/casey/tools', 'GET /api/credentials/:id/reveal', 'GET /api/email-credentials/:id/reveal',
+      'GET /admin/db/schema', 'GET /admin/db/schema.sql', 'GET /api/casey/catalog', 'GET /api/casey/review', 'GET /api/casey/review/:id', 'GET /api/casey/tools', 'GET /api/credentials/:id/reveal', 'GET /api/email-credentials/:id/reveal',
     ]);
   });
 

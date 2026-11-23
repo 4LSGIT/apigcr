@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-23T13:53:25.071Z_  
-_886 routes total — DELETE: 73, GET: 362, PATCH: 61, POST: 345, PUT: 42, _ALL: 3_
+_Generated 2026-11-23T15:37:10.740Z_  
+_888 routes total — DELETE: 73, GET: 364, PATCH: 61, POST: 345, PUT: 42, _ALL: 3_
 
 ## Global middleware chain
 
@@ -180,6 +180,8 @@ _886 routes total — DELETE: 73, GET: 362, PATCH: 61, POST: 345, PUT: 42, _ALL:
 | POST | `/api/casey/notes/restore` | `staffAuth` | — |
 | GET | `/api/casey/notes/version` | `staffAuth` | — |
 | GET | `/api/casey/notes/versions` | `staffAuth` | — |
+| GET | `/api/casey/review` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/casey/review/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/casey/tools` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/casey/tools/:name` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/casey/turn` | `jwtOrApiKey`, `staffOnly` | — |
@@ -1161,4 +1163,4 @@ _886 routes total — DELETE: 73, GET: 362, PATCH: 61, POST: 345, PUT: 42, _ALL:
 
 ---
 
-_886 routes total — DELETE: 73, GET: 362, PATCH: 61, POST: 345, PUT: 42, _ALL: 3_
+_888 routes total — DELETE: 73, GET: 364, PATCH: 61, POST: 345, PUT: 42, _ALL: 3_

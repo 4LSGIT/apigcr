@@ -66,13 +66,17 @@ const FROM_ADDR   = () => cfg('email_automations') || 'automations@4lsg.com';
 const ADMIN_EMAIL = () => cfg('email_it') || 'IT@4lsg.com';
 const APP_URL     = () => (cfg('app_url') || 'https://app.4lsg.com').replace(/\/+$/, '');
 
-const VALID_KINDS = ['problem', 'idea', 'question'];
+const VALID_KINDS = ['problem', 'idea', 'question', 'casey'];   // casey: Casey v2 S4b — a Casey answer flagged for review (the page's flag button or Casey's flag_for_review tool)
 
 const KIND_META = {
   problem:  { emoji: '🐛', label: 'Problem',  color: '#dc2626', bg: '#fef2f2' },
   idea:     { emoji: '💡', label: 'Idea',     color: '#b45309', bg: '#fffbeb' },
   question: { emoji: '❓', label: 'Question', color: '#0369a1', bg: '#f0f9ff' },
+  casey:    { emoji: '🐾', label: 'Casey report', color: '#7c3aed', bg: '#f5f3ff' },
 };
+// A Casey report may come without words (the flag alone says "look at this");
+// every other kind needs the reporter's note.
+const CASEY_DEFAULT_NOTE = 'Flagged for review (no note).';
 
 // Caps. sql_mode has no STRICT_TRANS_TABLES (see ref/SCHEMA_CONVENTIONS.md),
 // so an over-length write would TRUNCATE SILENTLY rather than error. Every
@@ -247,8 +251,8 @@ function buildEmail({ id, kind, note, userLabel, userEmail, pageUrl, context }) 
       <pre style="margin:0;padding:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;color:#4b5563;overflow:auto;white-space:pre-wrap;word-break:break-word">${esc(ctxJson)}</pre>
 
       <p style="margin:18px 0 0;font-size:12px;color:#9ca3af">
-        Sent by the Help &amp; Support button in the YisraCase shell (${esc(APP_URL())}).
-        The reporter saw none of the technical detail above — only their own message.
+        ${kind === 'casey' ? `Flagged from a Casey answer${ctx.casey && ctx.casey.by === 'casey' ? ' by Casey itself (flag_for_review), on the user\'s behalf' : ''} in the YisraCase shell (${esc(APP_URL())}); read the chat in Admin → Casey Chats.` : `Sent by the Help &amp; Support button in the YisraCase shell (${esc(APP_URL())}).
+        The reporter saw none of the technical detail above — only their own message.`}
       </p>
     </div>`;
 
@@ -284,13 +288,21 @@ router.post('/api/issue-reports', jwtOrApiKey, async (req, res) => {
       return res.status(429).json({ error: 'Too many reports in a short window — give it a few minutes.' });
     }
 
-    const note = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
-    if (!note) return res.status(400).json({ error: 'note is required' });
-
     const kind = VALID_KINDS.includes(req.body?.kind) ? req.body.kind : 'problem';
+    let note = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+    if (!note && kind === 'casey') note = CASEY_DEFAULT_NOTE;
+    if (!note) return res.status(400).json({ error: 'note is required' });
+    if (kind === 'casey') {
+      const c = req.body?.context && req.body.context.casey;
+      const chatId = c && typeof c === 'object' && !Array.isArray(c) && (typeof c.chat_id === 'number' || typeof c.chat_id === 'string') ? Number(c.chat_id) : NaN;
+      if (!(Number.isInteger(chatId) && chatId > 0)) return res.status(400).json({ error: 'a casey report names its chat: context.casey.chat_id' });
+      c.chat_id = chatId;   // stored as the number the review joins on (a string "5", "5.0" or " 5" would never match)
+      if (c.seq != null) c.seq = Number.isInteger(Number(c.seq)) && Number(c.seq) > 0 ? Number(c.seq) : null;
+    }
     const noteClamped = clamp(note, NOTE_MAX);
     const pageUrl     = clamp(req.body?.page_url, URL_MAX);
     const contextJson = packContext(req.body?.context);
+    if (kind === 'casey' && !/"chat_id"/.test(contextJson || '')) return res.status(400).json({ error: 'a casey report\'s context is too large to keep its chat' });   // packContext drops an oversized context (24 KB) for its marker: a casey report must keep the chat it names
 
     // Attribution. The users row is the authority for the display name; fall
     // back to the JWT username, then to a stable "#id" so a report is never
@@ -409,6 +421,7 @@ router.get('/api/issue-reports', jwtOrApiKey, requireAdmin, async (req, res) => 
          SUM(resolved_at IS NULL AND kind = 'problem')     AS open_problem,
          SUM(resolved_at IS NULL AND kind = 'idea')        AS open_idea,
          SUM(resolved_at IS NULL AND kind = 'question')    AS open_question,
+         SUM(resolved_at IS NULL AND kind = 'casey')       AS open_casey,
          SUM(resolved_at >= NOW() - INTERVAL 7 DAY)        AS resolved_7d,
          SUM(emailed_at IS NULL)                           AS never_emailed
        FROM issue_reports`

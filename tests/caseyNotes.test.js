@@ -224,7 +224,7 @@ describe('lib/caseyPrompt with notes', () => {
     expect(a).not.toBe(prompt.signature(defs, { global: 'B', families: {} }));
     expect(a).not.toBe(prompt.signature(defs));
     expect(prompt.signature(defs)).toBe(prompt.signature(defs, { global: '' }));
-    expect(a).toMatch(/^v2\.4-[0-9a-f]{8}$/);
+    expect(a).toMatch(/^v2\.5-[0-9a-f]{8}$/);
   });
   test('the prompt tells the model about a hit\'s note', () => {
     expect(prompt._TEXT).toMatch(/A result may carry `family_notes`/);

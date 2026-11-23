@@ -14,7 +14,7 @@ const loop = require('../services/casey/loop');
 const aiService = require('../services/aiService');
 
 test('version pinned; the text is built once and byte-identical; the schema context and the rules are in it', () => {
-  expect(prompt.VERSION).toBe('v2.4');   // S4a: the firm's notes in the prompt and on lookup_routes hits
+  expect(prompt.VERSION).toBe('v2.5');   // S4b: flag_for_review
   const a = prompt.systemText();
   const b = prompt.systemText();
   expect(a).toBe(b);
@@ -26,6 +26,8 @@ test('version pinned; the text is built once and byte-identical; the schema cont
     'tie for that place', 'Page line',
     // S4a: the firm's notes on lookups; the time rule names the firm-local columns (review S2a: log_date is NOT UTC)
     'family_notes', 'log.log_date', 'firm-local wall clock', 'email_log.processed_at', 'the comment wins',
+    // S4b: the flag — when, once per turn, tell the user
+    'flag_for_review', 'three consecutive failures of the same tool', 'Once per turn at most', 'tell the user the chat was flagged',
     // S3b: writes are PROPOSED as cards, never run by Casey; the outcome protocol; refusals and declines
     'api_write', 'card the user approves', 'turn ENDS', 'WRITTEN BY THE APP', 'DECLINED by the user', 'NOT ACTED ON', 'RECORD DATA', 'Read that block before answering', '"$1.task_id"', 'can never be filled in', 'A DECLINED card means no', 'is not a refusal']) {
     expect(a).toContain(must);
@@ -48,7 +50,7 @@ test('generic: Casey\'s own text names no firm or person (the manifest\'s exampl
 test('signature(tools): stable across calls, changes with the tool definitions or the text', () => {
   const defs = tools.definitions();
   const s1 = prompt.signature(defs);
-  expect(s1).toMatch(/^v2\.4-[0-9a-f]{8}$/);
+  expect(s1).toMatch(/^v2\.5-[0-9a-f]{8}$/);
   expect(prompt.signature(tools.definitions())).toBe(s1);
   const altered = defs.map((d, i) => (i === 0 ? { ...d, description: d.description + ' ' } : d));
   expect(prompt.signature(altered)).not.toBe(s1);

@@ -388,6 +388,14 @@ window.FEATURE_REGISTRY = {
     gate: 'system.settings',
     hoverAnim: 'fa-shake', styleVars: '--fa-animation-duration:1.5s',
   },
+  // Casey v2 S4b: every Casey chat of every user, read-only, for review (Fred,
+  // 2026-11-23: a superuser may read any chat — patterns, usage, abuse). The
+  // routes are the SU casey guard (elevation); the tile is su.
+  adminCaseyChats: {
+    label: 'Casey Chats (SU)', icon: 'comments', target: 'caseyChatsDiv', group: 'admin',
+    gate: 'su',
+    hoverAnim: 'fa-bounce', styleVars: '--fa-animation-duration:1.2s',
+  },
 
   // ── In no default layout: "More actions" (ui-custom S6b) ─────────────────
   // Launcher items for things the shell already does from fixed chrome, and

@@ -259,6 +259,7 @@ manual/08-Admin-Tools/10-comms-archive.md
 manual/08-Admin-Tools/11-tool-actions.md
 manual/08-Admin-Tools/12-shared-values.md
 manual/08-Admin-Tools/13-casey-notes.md
+manual/08-Admin-Tools/14-casey-chats.md
 manual/08-Admin-Tools/README.md
 manual/README.md
 package-lock.json
@@ -323,6 +324,7 @@ public/caseconfig/types.html
 public/caseerror.html
 public/casey.html
 public/caseyNotes.html
+public/caseyReview.html
 public/checklistView.html
 public/checklistsView.html
 public/comms.html
@@ -704,6 +706,7 @@ ref/migrations/2026-11-23_casey_v2_s3b_cards.sql
 ref/migrations/2026-11-23_casey_v2_s3c_sent.sql
 ref/migrations/2026-11-23_casey_v2_s4a_notes.sql
 ref/migrations/2026-11-23_casey_v2_s4a_notes_seed.md
+ref/migrations/2026-11-23_casey_v2_s4b_flag.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -903,11 +906,13 @@ scripts/caseCaptionBackfill.js
 scripts/caseyP4Idempotency.js
 scripts/caseyP5Ledger.js
 scripts/caseyS4aAdminTile.snippet.js
+scripts/caseyS4bAdminTile.snippet.js
 scripts/caseyV2ChatsMigrate.js
 scripts/caseyV2S3aMigrate.js
 scripts/caseyV2S3bMigrate.js
 scripts/caseyV2S3cMigrate.js
 scripts/caseyV2S4aMigrate.js
+scripts/caseyV2S4bMigrate.js
 scripts/cfCourtBackfill.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
@@ -1141,6 +1146,7 @@ services/casey/notes.js
 services/casey/spend.js
 services/casey/tools/api_get.js
 services/casey/tools/api_write.js
+services/casey/tools/flag_for_review.js
 services/casey/tools/index.js
 services/casey/tools/index_error.js
 services/casey/tools/lookup_routes.js
@@ -1431,6 +1437,7 @@ tests/caseyDocuments.mysql.test.js
 tests/caseyDocuments.test.js
 tests/caseyDocumentsGenerate.mysql.test.js
 tests/caseyDocumentsGenerate.test.js
+tests/caseyFlagTool.test.js
 tests/caseyFormDiscardPdf.mysql.test.js
 tests/caseyFormDiscardPdf.test.js
 tests/caseyFormSubmit.mysql.test.js
@@ -1469,6 +1476,9 @@ tests/caseyReportDraft.mysql.test.js
 tests/caseyReportDraft.test.js
 tests/caseyRequirementOverride.mysql.test.js
 tests/caseyRequirementOverride.test.js
+tests/caseyReview.mysql.test.js
+tests/caseyReview.test.js
+tests/caseyReviewPage.test.js
 tests/caseySend.routes.test.js
 tests/caseySendAction.mysql.test.js
 tests/caseySendAction.test.js

@@ -97,7 +97,7 @@ const LIVE_VT = { 'firm:admin': ['it', 'admin'] };   // the live firm's rule
 describe('the effective registry (pure)', () => {
   test('non-admin: every placed item (and every S6b extra) once, minus gated', () => {
     const eff = L.computeEffective({ isAdmin: false, ui: FUI() });
-    expect(EXTRAS).toEqual(['adminCaseyNotes', 'myTasks', 'logout', 'code']);   // S4a: Casey Notes until the live Admin page places it
+    expect(EXTRAS).toEqual(['adminCaseyNotes', 'adminCaseyChats', 'myTasks', 'logout', 'code']);   // S4a / S4b: the Casey admin tiles until the live Admin page places them
     const want = [...ALL_LISTED.filter((k) => !GATED.has(k)), ...PAGES];   // a gated EXTRA (S4a's adminCaseyNotes) is dropped for a non-holder like a gated tile
     expect(ids(eff).sort()).toEqual(want.sort());
     expect(new Set(ids(eff)).size).toBe(eff.length);

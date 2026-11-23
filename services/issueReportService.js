@@ -50,7 +50,7 @@ const MESSAGE_MAX = 2000;
 const REPLY_DEBOUNCE_S = 30;
 const CLAIM_STALE_MIN = 15;     // > nodemailer's 2 min connect + 10 min socket defaults
 
-const KIND_LABEL = { problem: 'problem report', idea: 'idea', question: 'question' };
+const KIND_LABEL = { problem: 'problem report', idea: 'idea', question: 'question', casey: 'Casey report' };   // casey: Casey v2 S4b — a flagged Casey answer
 
 // Per kind, in display order. `text` is the generic part of the reply; an
 // outcome with needsMessage has none worth sending alone, so the admin's
@@ -81,6 +81,18 @@ const OUTCOMES = Object.freeze({
   ]),
   question: Object.freeze([
     { key: 'answered', label: 'Answered', needsMessage: true, text: '' },
+  ]),
+  // Casey v2 S4b: a Casey answer flagged for review (by the user, or by Casey
+  // itself). The reviewer reads the chat in Admin → Casey Chats; the fix is
+  // usually a Casey Note, sometimes code.
+  casey: Object.freeze([
+    { key: 'noted', label: 'Fixed with a Casey Note',
+      text: 'Thanks for flagging that Casey answer. Casey has been given a note about it, so it should handle this right from now on.' },
+    { key: 'fixed', label: 'Fixed in the app',
+      text: "Thanks for flagging that Casey answer. The cause was on the app's side and it is fixed; ask Casey again and it should go right." },
+    { key: 'by_design', label: 'Casey was right',
+      text: 'Thanks for flagging that Casey answer. We read the chat: Casey answered as it should have. If something still looks wrong, reply to this email with what you expected.' },
+    { key: 'other', label: 'Other', needsMessage: true, text: '' },
   ]),
 });
 

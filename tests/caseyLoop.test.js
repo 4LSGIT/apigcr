@@ -58,7 +58,9 @@ jest.mock('../services/casey/chats', () => {
     async deleteMessages(db, chatId, ids) { const list = mockStore.messages.get(Number(chatId)); const n = list.length; mockStore.messages.set(Number(chatId), list.filter((m) => !ids.includes(m.id))); return n - list.length; },
   };
 });
-jest.mock('../services/casey/cards', () => require('./helpers/caseyMemoryCards').make(jest.requireActual('../services/casey/cards')));   // S3b: the ledger, in memory (the real store: tests/caseyCards.mysql.test.js)
+jest.mock('../services/casey/cards', () => require('./helpers/caseyMemoryCards').make(jest.requireActual('../services/casey/cards')));
+jest.mock('../services/emailService', () => ({ sendEmail: jest.fn(async () => ({ ok: true })) }));   // S4b: the report route's IT email (flag_for_review files through it)
+// (S3b: the cards mock above is the ledger in memory — the real store: tests/caseyCards.mysql.test.js)
 const mockSettings = { model: null, models: null, notes: null, effort: null };
 jest.mock('../lib/firmConfig', () => {
   const actual = jest.requireActual('../lib/firmConfig');
@@ -79,11 +81,15 @@ const spendState = { cap: null, spent: 0 };
 const mockNotes = { rows: [] };   // S4a: casey_notes current rows ({ scope, version, body }); the service's 30 s cache is cleared where a test changes them
 const CRED_ROW = { id: 12, name: 'Claude', type: 'api_key', config: JSON.stringify({ header: 'x-api-key', key: 'test-key' }), allowed_urls: null, access_token: null, oauth_status: null, verbose: 0 };
 const aiRows = [];
+const reportRows = [];   // S4b: issue_reports INSERT params (flag_for_review through the real route)
 const db = { query: jest.fn(async (sql, params) => {
   if (/FROM app_settings/i.test(sql)) return [spendState.cap == null ? [] : [{ key: 'assistant_ai_monthly_cap_cents', value: spendState.cap }]];
   if (/SUM\(cost_cents\)/i.test(sql)) return [[{ c: spendState.spent }]];
   if (/FROM credentials/i.test(sql)) return [[CRED_ROW]];                          // the seam test's REAL converse
   if (/FROM casey_notes/i.test(sql)) return [mockNotes.rows];                      // S4a: the firm's notes, read once per turn (services/casey/notes.current)
+  if (/SELECT user_name, email FROM users/i.test(sql)) return [[{ user_name: 'IT', email: 'it@example.test' }]];   // S4b: the report route's attribution
+  if (/INSERT INTO issue_reports/i.test(sql)) { reportRows.push(params); return [{ insertId: 400 + reportRows.length }]; }
+  if (/UPDATE issue_reports SET emailed_at/i.test(sql)) return [{ affectedRows: 1 }];
   if (/INSERT INTO ai_calls/i.test(sql)) { aiRows.push(params); return [{ insertId: aiRows.length }]; }
   throw new Error(`unexpected sql: ${sql}`);
 }) };
@@ -102,6 +108,7 @@ beforeAll(async () => {
   app.use((req, _res, next) => { req.db = db; next(); });
   app.use(probe);
   app.use(require('../routes/api.casey'));
+  app.use(require('../routes/api.issueReports'));   // S4b: flag_for_review posts to it over loopback, as the user
   server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   port = server.address().port;
 });
@@ -148,6 +155,32 @@ const sig = () => prompt.signature(tools.definitions());
 const notesSvc = require('../services/casey/notes');
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('S4b: flag_for_review through the real report route', () => {
+  beforeEach(() => { reportRows.length = 0; });
+  test('the model flags the chat: one report of kind casey filed AS THE USER with the chat, the model and the prompt_version; a second flag in the same turn files nothing; the next turn may flag again', async () => {
+    const converse = model([
+      reply([TU('t1', 'flag_for_review', { note: 'the route refused twice' }), TU('t2', 'flag_for_review', { note: 'again' })], 'tool_use'),
+      reply([T('I flagged this chat for review.')]),
+    ]);
+    const { events, res } = await turn({ converse, text: 'Why does the task route refuse me?' });
+    expect(res.ok).toBe(true);
+    const results = events.filter((e) => e.type === 'tool_result');
+    expect(results.map((e) => [e.name, e.ok])).toEqual([['flag_for_review', true], ['flag_for_review', true]]);
+    expect(reportRows).toHaveLength(1);
+    const [userId, userName, kind, note, pageUrl, contextJson] = reportRows[0];
+    expect([userId, userName, kind, note, pageUrl]).toEqual([6, 'IT', 'casey', '[flagged by Casey] the route refused twice', null]);   // no page: the model flagged, not a pane
+    expect(JSON.parse(contextJson)).toEqual({ casey: { chat_id: 1, seq: null, model: 'claude-sonnet-5-5', prompt_version: sig(), by: 'casey', tool_use_id: 't1' } });
+    const blocks = stored(1)[2].content;
+    expect(JSON.parse(blocks[0].content).data).toEqual({ report_id: 401, emailed: true, message: 'filed for review' });
+    expect(JSON.parse(blocks[1].content).data).toMatchObject({ report_id: 401, already: true });
+    // the next turn: a fresh holder
+    const c2 = model([reply([TU('t3', 'flag_for_review', { note: 'still' })], 'tool_use'), reply([T('Flagged again.')])]);
+    await turn({ converse: c2, chatId: 1 });
+    expect(reportRows).toHaveLength(2);
+    expect(JSON.parse(reportRows[1][5]).casey.tool_use_id).toBe('t3');
+  });
+});
+
 describe('S4a: the firm\'s notes', () => {
   afterEach(() => { mockNotes.rows = []; notesSvc.clearCache(); });
   test('the global note is in the system text and the signature; the family notes reach lookup_routes; the chat freezes the note-bearing prompt_version', async () => {
@@ -158,6 +191,7 @@ describe('S4a: the firm\'s notes', () => {
       reply([TU('t1', 'lookup_routes', { family: '/api/casey', limit: 1 })], 'tool_use'),
       reply([T('Done.')]),
     ]);
+    const notesReadsBefore = db.query.mock.calls.filter(([s]) => /FROM casey_notes/.test(s)).length;   // the mock is not cleared between tests
     const { events, res } = await turn({ converse });
     expect(res.ok).toBe(true);
     const want = prompt.signature(tools.definitions(), doc);
@@ -173,7 +207,7 @@ describe('S4a: the firm\'s notes', () => {
     expect(JSON.parse(block.content).data.family_notes).toEqual({ '/api/casey': 'The catalog read is SU only.' });
     expect(mockStore.chats.get(1).prompt_version).toBe(want);
     // The notes were read once for the turn (the service caches; the loop asks once).
-    expect(db.query.mock.calls.filter(([s]) => /FROM casey_notes/.test(s))).toHaveLength(1);
+    expect(db.query.mock.calls.filter(([s]) => /FROM casey_notes/.test(s))).toHaveLength(notesReadsBefore + 1);
   });
   test('an edit of the global note between turns is a prompt change: the stored thinking is dropped and the chat re-stamped (the deploy mechanism)', async () => {
     mockNotes.rows = [{ scope: 'global', version: 1, body: 'A' }];

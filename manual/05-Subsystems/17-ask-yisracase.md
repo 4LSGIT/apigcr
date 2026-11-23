@@ -54,6 +54,12 @@ be approved or declined; one that ran partway offers **Continue** or **Stop
 here**. A step that shows as *unknown* was sent but its result was never
 recorded — check the record before asking for it again.
 
+### Flagging an answer, and who can read your chats
+
+Under every answer there is a small **Flag for review**. Use it when Casey got something wrong, refused something it should have done, or just left you unsure: type a line about what went wrong if you like, or send the flag alone. It files a Casey report in the Support Inbox, where IT reads the whole chat and fixes the cause — usually by writing Casey a note so it handles the case right from then on. Casey may also flag a chat itself when it is stuck; it tells you when it does.
+
+A superuser can open any Casey chat — yours included — in Admin → Casey Chats, flagged or not. That is how flagged answers get fixed and how misuse is caught. Casey is a work tool: do not put in it what you would not put in a work email.
+
 Everything below describes the previous Casey, which the button opens while
 the setting is off.
 

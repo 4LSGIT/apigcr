@@ -88,9 +88,9 @@ const EGG_CSS = (() => { const h = STYLES.filter((s) => s.includes('.home-egg-ro
 
 const HOME_ALL = '<div class="home-egg-row"><button type="button" id="homeAll" class="home-egg" onclick="openMainTab(\'tabAll\')" title="All features" aria-label="All features"><i class="fa-solid fa-table-cells" aria-hidden="true"></i></button></div>';
 const SU_TILES = ['adminReadonlyKeys', 'adminApiKeys', 'adminCtaLinks', 'adminDbConsole', 'adminConnections', 'adminApiTester', 'adminTools',
-  'adminScratch', 'adminSystemAlerts', 'adminSupportInbox', 'adminMailboxes'];
+  'adminScratch', 'adminSystemAlerts', 'adminSupportInbox', 'adminMailboxes', 'adminCaseyChats'];   // S4b: Casey Chats (su), unplaced like Casey Notes
 const CAP_TILES = ['adminUsers', 'adminSharedValues', 'adminCaseyNotes'];   // S4a: Casey Notes (system.settings) — registered and gated, but NOT in the frozen Admin layout (HISTORIC is a record): the live page gets it by a data step, the tests list it among the extras
-const UNPLACED = ['adminCaseyNotes'];
+const UNPLACED = ['adminCaseyNotes', 'adminCaseyChats'];
 const SURFACES = ['home', 'sidebar', 'homeIcons'];   // the mounted ones; More and Admin are pages (C4)
 const FIRM_URL = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const ui = ({ layout, firm, ro } = {}) => ({ firm: { ...(ro ? { registry_overrides: ro } : {}), ...(firm ? { layout: firm } : {}) }, user: layout ? { layout } : {} });
@@ -233,7 +233,7 @@ describe('2. icon rows: the surfaces and their markup', () => {
 
   test('the effective registry: casey is placed (group More Features, after its grid); all is placed (group Settings, the sidebar wins); the extras are myTasks, logout and code', () => {
     const eff = VL.computeEffective({ ...SU, ui: hub() });
-    expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(['adminCaseyNotes', 'myTasks', 'logout', 'code']);   // S4a: Casey Notes until the live Admin page places it (a data step)
+    expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(['adminCaseyNotes', 'adminCaseyChats', 'myTasks', 'logout', 'code']);   // S4a / S4b: the two Casey admin tiles until the live Admin page places them (a data step each)
     expect(ids(eff.filter((e) => e.group === 'More Features'))).toEqual([...hubTiles('firm:more'), 'casey']);
     expect(eff.find((e) => e.id === 'all').group).toBe('Settings');
     expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);   // no Firm: both page items sit in Settings (L3)
@@ -243,7 +243,7 @@ describe('2. icon rows: the surfaces and their markup', () => {
     const e2 = VL.computeEffective({ ...SU, ui: hub({ layout: { pages: { 'firm:admin': { ...pages['firm:admin'], icons: [{ item: 'myTasks' }] } } } }) }, REG, lay);
     expect(e2.find((e) => e.id === 'myTasks').group).toBe('Admin');
     expect(e2.find((e) => e.id === 'logout').group).toBe('Home');
-    expect(ids(e2.filter((e) => e.group === 'More actions'))).toEqual(['adminCaseyNotes', 'code']);   // S4a: the unplaced tile
+    expect(ids(e2.filter((e) => e.group === 'More actions'))).toEqual(['adminCaseyNotes', 'adminCaseyChats', 'code']);   // S4a / S4b: the unplaced tiles
   });
 });
 

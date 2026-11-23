@@ -71,6 +71,21 @@
   .trail pre { margin: 2px 0 6px 20px; font-size: 11px; max-height: 240px; overflow: auto; background: var(--hover); border-radius: 6px; padding: 6px; white-space: pre-wrap; word-break: break-all; }
   .trail .think { font-style: italic; }
   .meta { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+  /* S4b: flag an answer for review. A small control under the answer; a note input appears on click. */
+  .flagbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 11px; color: var(--text-muted); }
+  .flagbar button.flag { border: 0; background: transparent; color: var(--text-muted); padding: 0 2px; cursor: pointer; font-size: 11px; }
+  .flagbar button.flag:hover { color: var(--danger); }
+  .flagbar input { flex: 1 1 160px; min-width: 0; font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface, var(--page-bg)); color: var(--text); }
+  .flagbar .done { color: var(--danger); }
+  .msg.assistant.flagged { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger) inset; }
+  #review { display: none; padding: 6px 10px; font-size: 12px; background: var(--surface, var(--page-bg)); border-bottom: 1px solid var(--border); color: var(--text-muted); overflow-wrap: anywhere; min-width: 0; }   /* a report's note may be one long token: the banner must never widen the pane (six-width check) */
+  #review b { color: var(--text); }
+  body.review #compose, body.review #chatPick, body.review #newChat, body.review #delChat, body.review #modelPick { display: none !important; }
+  .trail details.rev { font-size: 11px; color: var(--text-muted); margin: 2px 0; }
+  .trail details.rev summary { cursor: pointer; }
+  .trail details.rev pre, #log details.raw pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; font-size: 11px; margin: 4px 0 0; }
+  #log details.raw { font-size: 11px; color: var(--text-muted); margin: 8px 0; }
+  body.review #review { display: block; }
   .keep { margin-top: 6px; }
 
   /* S3b: a card — a write the model proposes and the user approves here. */
@@ -118,6 +133,7 @@
   <button type="button" id="newChat" title="Start a new chat"><i class="fa-solid fa-plus"></i></button>
   <button type="button" id="delChat" class="danger" title="Delete this chat" hidden><i class="fa-solid fa-trash"></i></button>
 </div>
+<div id="review"></div>
 <div id="log"><div id="empty">Ask about cases, contacts, tasks, mail — or how the app works.<span class="yc-hint">Casey looks things up as you, and shows every step.</span></div></div>
 <div id="compose">
   <div id="ctx"></div>
@@ -179,6 +195,11 @@ let contextOn = true;       // the shell's workspace context is attached to the 
 let stopPending = false;    // Stop pressed before this turn's `chat` line (the claim is taken by then): posted when it lands
 let turnClaimed = false;    // this turn's `chat` line has arrived
 const cardEls = new Map();  // card id → its element (S3b)
+// S4b: review mode (?review=<chat id>[&seq=<n>]) — a superuser reads another user's chat through GET /api/casey/review/:id:
+// no composer, no chat list, the cards come with the payload (never fetched by id — the card read is owner-scoped), the
+// flagged messages are outlined and the one named by `seq` is scrolled to. The page is hosted by Admin → Casey Chats.
+const REVIEW = (() => { try { const u = new URL(location.href); const id = Number(u.searchParams.get('review')); return id > 0 ? { id, seq: Number(u.searchParams.get('seq')) || null } : null; } catch (_) { return null; } })();
+let reviewCards = null;     // id → card, in review mode
 
 const log = E('log'), textEl = E('text'), sendBtn = E('send'), stopBtn = E('stop'), pick = E('chatPick'), chip = E('modelChip'), modelPick = E('modelPick');
 
@@ -197,6 +218,23 @@ function addUser(text) {
 }
 function newTrail() { const t = document.createElement('div'); t.className = 'trail'; log.appendChild(t); return t; }
 function trailNote(trail, text) { const n = document.createElement('div'); n.className = 'note'; n.textContent = text; trail.appendChild(n); scrollDown(); }
+function trailDetails(trail, label, text) {
+  const d = document.createElement('details'); d.className = 'rev';
+  const s = document.createElement('summary'); s.textContent = label; d.appendChild(s);
+  const pre = document.createElement('pre'); pre.textContent = text; d.appendChild(pre);
+  trail.appendChild(d);
+}
+/** Review mode: the tool's answer under its step, in the same <pre> the call shows. */
+function trailResult(trail, id, content) {
+  const step = Array.from(trail.querySelectorAll('.step')).find((s) => s.dataset.id === String(id));
+  const pre = step && step.nextElementSibling && step.nextElementSibling.tagName === 'PRE' ? step.nextElementSibling : null;
+  if (!pre) return;
+  let shown = String(content == null ? '' : content);
+  try { shown = JSON.stringify(JSON.parse(shown), null, 1); } catch (_) { /* as stored */ }
+  pre.textContent += '\n\n→ result:\n' + shown;
+}
+/** The server's context block (services/casey/loop.js contextBlock): the marker line first. Checked only on the FIRST text block of a row — position is the guarantee. */
+function isContextBlock(text) { return typeof text === 'string' && text.startsWith(CONTEXT_PREFIX + '\n'); }
 function trailStep(trail, { id, name, input, ok, code, ms, status }) {
   let step = Array.from(trail.querySelectorAll('.step')).find((s) => s.dataset.id === String(id)) || null;
   if (!step) {
@@ -220,17 +258,51 @@ function trailThink(trail, text) {
   t.textContent = (t.textContent + text).slice(-400);
   scrollDown();
 }
-function addAssistant(text, { error = false, streaming = false } = {}) {
+function addAssistant(text, { error = false, streaming = false, seq = null } = {}) {
   clearEmpty();
   const d = document.createElement('div'); d.className = `msg assistant md${error ? ' error' : ''}${streaming ? ' streaming' : ''}`;
-  if (streaming) { d.dataset.raw = text || ''; d.textContent = text || ''; } else d.innerHTML = renderMd(text);
+  if (seq != null) d.dataset.seq = String(seq);
+  if (streaming) { d.dataset.raw = text || ''; d.textContent = text || ''; } else { d.innerHTML = renderMd(text); if (!REVIEW && !error) flagControl(d); }   // an error bubble is not a stored answer: nothing for a reviewer to find
   log.appendChild(d); scrollDown(); return d;
 }
-function finishAssistant(d, text, meta) {
+function finishAssistant(d, text, meta, seq = null) {
   d.classList.remove('streaming'); delete d.dataset.raw;
+  if (seq != null) d.dataset.seq = String(seq);
   d.innerHTML = renderMd(text) + (meta ? `<div class="meta">${esc(meta)}</div>` : '');
+  if (!REVIEW) flagControl(d);
   scrollDown();
 }
+// S4b: the flag under an answer → an optional note → POST /api/issue-reports (kind casey, the chat and the message's seq in context.casey).
+// The report is the same the Help & Support button files; a superuser reads the chat in Admin → Casey Chats.
+function flagControl(d) {
+  if (!chatId) return;   // an answer with no chat (an error before the chat existed) has nothing to point a reviewer at
+  const bar = document.createElement('div'); bar.className = 'flagbar';
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'flag'; b.title = 'Flag this answer for the firm\'s review'; b.innerHTML = '<i class="fa-regular fa-flag"></i> Flag for review';
+  bar.appendChild(b); d.appendChild(bar);
+  b.addEventListener('click', () => {
+    if (bar.querySelector('input')) return;
+    const inp = document.createElement('input'); inp.type = 'text'; inp.maxLength = 500; inp.placeholder = 'What went wrong? (optional)'; inp.setAttribute('aria-label', 'Why this answer is flagged');
+    const send = document.createElement('button'); send.type = 'button'; send.className = 'flag'; send.textContent = 'Send';
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'flag'; cancel.textContent = 'Cancel';
+    bar.append(inp, send, cancel); inp.focus();
+    cancel.addEventListener('click', () => { inp.remove(); send.remove(); cancel.remove(); });
+    const go = async () => {
+      send.disabled = true; cancel.disabled = true;
+      const seq = d.dataset.seq ? Number(d.dataset.seq) : null;
+      try {
+        const r = await P.apiSend('/api/issue-reports', 'POST', { kind: 'casey', note: inp.value.trim(), page_url: location.href,
+          context: { casey: { chat_id: Number(chatId), seq, model: chatModel, prompt_version: lastPromptVersion, by: 'user' } } });
+        bar.innerHTML = `<span class="done"><i class="fa-solid fa-flag"></i> Flagged for review (#${esc(r && r.id)})${r && r.emailed === false ? ' — the IT email did not go out; the report is filed' : ''}</span>`;
+        d.classList.add('flagged');
+      } catch (err) { send.disabled = false; cancel.disabled = false; setFlagErr(bar, (err && err.message) || 'Could not flag this answer'); }
+    };
+    send.addEventListener('click', go);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+  });
+}
+function setFlagErr(bar, msg) { let e = bar.querySelector('.err'); if (!e) { e = document.createElement('span'); e.className = 'err'; bar.appendChild(e); } e.textContent = msg; }
+let lastPromptVersion = null;   // the open chat's prompt_version: the `chat` line's, or the opened row's; null on a new chat (a flag records it)
+let chatModel = null;           // the open chat's model id (the chip shows its label): a flag records it
 function keepGoingButton(d) {
   const b = document.createElement('button'); b.type = 'button'; b.className = 'keep'; b.textContent = 'Keep going';
   b.title = 'Casey hit this turn\'s tool budget; ask it to continue';
@@ -277,7 +349,7 @@ function renderCardInto(el, card) {
   for (const t of el.__notes || []) el.insertAdjacentHTML('beforeend', `<div class="state err">${esc(t)}</div>`);   // what this run said about a step survives the re-renders
   const actions = el.querySelector('.actions');
   const btn = (label, cls, fn, title) => { const b = document.createElement('button'); b.type = 'button'; b.className = cls || ''; b.textContent = label; if (title) b.title = title; b.addEventListener('click', () => idle().then(fn)); actions.appendChild(b); return b; };
-  if (el.dataset.running) { actions.remove(); return; }
+  if (el.dataset.running || REVIEW) { actions.remove(); return; }   // S4b: the review reads; the owner's routes are never called from it
   if (card.status === 'proposed') {
     btn('Approve', 'primary', () => runCard(el, card), card.steps.length > 1 ? 'Run the steps, in order, as you' : 'Send this request as you');
     btn('Decline', '', () => declineUi(el, card));
@@ -434,32 +506,41 @@ function renderTranscript(messages) {
       // A user row is the USER's turn when it carries the context block (the loop opens every turn with
       // it — after any INTERRUPTED repair results it prepends); a row with results and no context block
       // is the loop's own results message, whose text (the budget note) is shown as a trail note.
-      const isTurn = blocks.some((b) => b.type === 'text' && String(b.text).startsWith(CONTEXT_PREFIX)) || !blocks.some((b) => b.type === 'tool_result');
+      // The server's context block is always the FIRST text block of a turn row, after any tool_results, and starts with
+      // the marker line: it is recognised by position and shape, never by prefix alone — a user's own words that happen to
+      // start with the marker are a later block and stay visible (review S4b B1: a reviewer must see every word).
+      const firstText = blocks.findIndex((b) => b.type === 'text');
+      const ctxIdx = firstText >= 0 && isContextBlock(blocks[firstText].text) ? firstText : -1;
+      const isTurn = ctxIdx >= 0 || !blocks.some((b) => b.type === 'tool_result');
       let outcomeShown = false;
-      for (const b of blocks) {
+      blocks.forEach((b, i) => {
         if (b.type === 'tool_result') {
           const t = stepTrail.get(b.tool_use_id) || trail || (trail = newTrail());
           const p = pending.get(b.tool_use_id); let env = null; try { env = JSON.parse(b.content); } catch (_) {}
           trailStep(t, { id: b.tool_use_id, name: p ? p.name : (env && env.tool) || '?', input: p ? p.input : {}, ok: env ? !!env.ok : !b.is_error, code: env && env.error && env.error.code, ms: env && env.ms, status: 'done' });
-        } else if (b.type !== 'text' || String(b.text).startsWith(CONTEXT_PREFIX)) {
-          // the context block is never shown
+          if (REVIEW) trailResult(t, b.tool_use_id, b.content);   // the review shows what the model got back
+        } else if (i === ctxIdx) {
+          if (REVIEW) { const t = trail || (trail = newTrail()); trailDetails(t, 'context block (written by the app)', b.text); }   // never shown to the user; shown to the reviewer
+        } else if (b.type !== 'text') {
+          if (REVIEW) { const t = trail || (trail = newTrail()); trailDetails(t, `${b.type} block`, JSON.stringify(b, null, 1)); }
         } else if (isTurn && m.meta && m.meta.card_outcome && !outcomeShown) { outcomeShown = true; const t = trail || (trail = newTrail()); trailNote(t, String(b.text).split('\n')[0]); turnCost = 0; calls = 0; }   // the card's outcome opened this turn (the row's meta says so; the first non-context text block is the block)
         else if (isTurn) { addUser(b.text); turnCost = 0; calls = 0; trail = null; }
         else { const t = trail || (trail = newTrail()); trailNote(t, b.text); }
-      }
+      });
       if (m.meta && m.meta.card_id) {
-        const el = addCard({ id: m.meta.card_id, tier: 1, summary: 'Loading the card…', status: 'resumed', steps: [] }, trail);
-        refreshCard(el, m.meta.card_id);
+        if (reviewCards) { const c = reviewCards[String(m.meta.card_id)]; addCard(c || { id: m.meta.card_id, tier: 1, summary: '(card not found)', status: 'resumed', steps: [] }, trail); }
+        else { const el = addCard({ id: m.meta.card_id, tier: 1, summary: 'Loading the card…', status: 'resumed', steps: [] }, trail); refreshCard(el, m.meta.card_id); }
         trail = null;
       }
     } else {
       const uses = blocks.filter((b) => b.type === 'tool_use');
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('');
       turnCost += Number(m.meta && m.meta.cost_cents) || 0; calls += uses.length;
+      if (REVIEW) for (const b of blocks) if (b.type === 'thinking' || b.type === 'redacted_thinking') { trail = trail || newTrail(); trailDetails(trail, b.type === 'thinking' ? 'thinking' : 'thinking (redacted by the provider)', b.type === 'thinking' ? String(b.thinking || '') : '(not readable)'); }
       if (uses.length) { trail = trail || newTrail(); for (const u of uses) { pending.set(u.id, u); stepTrail.set(u.id, trail); trailStep(trail, { id: u.id, name: u.name, input: u.input, status: 'run' }); } }
       if (text) {
         const bits = [calls ? `${calls} tool call${calls === 1 ? '' : 's'}` : null, turnCost ? fmtCents(turnCost) : null].filter(Boolean).join(' · ');
-        const d = addAssistant(text); if (bits) d.insertAdjacentHTML('beforeend', `<div class="meta">${esc(bits)}</div>`);
+        const d = addAssistant(text, { seq: m.seq }); if (bits) d.insertAdjacentHTML('beforeend', `<div class="meta">${esc(bits)}</div>`);
         trail = null;
       }
     }
@@ -524,10 +605,12 @@ function showModelControl() {
 async function openChat(id) {
   chatId = id;
   E('delChat').hidden = !id;
+  lastPromptVersion = null; chatModel = null;   // S4b: a flag records the OPEN chat's prompt and model, never the previous chat's
   if (!id) { log.innerHTML = '<div id="empty">Ask about cases, contacts, tasks, mail — or how the app works.<span class="yc-hint">Casey looks things up as you, and shows every step.</span></div>'; cardEls.clear(); setChip(boot ? boot.model : ''); E('title').textContent = 'Casey'; pick.value = ''; renderModelMenu(); showModelControl(); return; }
   try {
     const r = await P.apiSend(`/api/casey/chats/${id}`);
     setChip(r.chat.model); E('title').textContent = r.chat.title; showModelControl();
+    lastPromptVersion = r.chat.prompt_version || null; chatModel = r.chat.model || null;
     renderTranscript(r.messages || []);
     pick.value = String(id);
   } catch (err) {
@@ -564,7 +647,7 @@ async function streamTurn(body, { resume = false, cardEl = null } = {}) {
     const res = await P.apiSend(resume ? '/api/casey/turn/resume' : '/api/casey/turn', 'POST', { ...body, ...(ctx ? { context: ctx } : {}) }, {}, { responseType: 'response' });
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     const onLine = (ev) => {
-      if (ev.type === 'chat') { if (!chatId) { chatId = ev.id; E('delChat').hidden = false; E('title').textContent = ev.title; } setChip(ev.model); showModelControl(); turnClaimed = true; if (!resume) closedHere.push(...closeOpenCards()); if (stopPending) { stopPending = false; stopTurn(); } }   // the server resolved any open card before this line (a proposed one is declined implicitly): paint it now, not before the turn was accepted
+      if (ev.type === 'chat') { lastPromptVersion = ev.prompt_version || null; chatModel = ev.model || null; if (!chatId) { chatId = ev.id; E('delChat').hidden = false; E('title').textContent = ev.title; } setChip(ev.model); showModelControl(); turnClaimed = true; if (!resume) closedHere.push(...closeOpenCards()); if (stopPending) { stopPending = false; stopTurn(); } }   // the server resolved any open card before this line (a proposed one is declined implicitly): paint it now, not before the turn was accepted
       else if (ev.type === 'tool_call') trailStep(trail, { id: ev.id, name: ev.name, input: ev.input, status: 'run' });
       else if (ev.type === 'tool_result') trailStep(trail, { id: ev.id, name: ev.name, input: undefined, ok: ev.ok, code: ev.code, ms: ev.ms, status: 'done' });
       else if (ev.type === 'thinking') { if (ev.text) trailThink(trail, ev.text); }
@@ -580,7 +663,7 @@ async function streamTurn(body, { resume = false, cardEl = null } = {}) {
         const bits = [`${b.calls} tool call${b.calls === 1 ? '' : 's'}`, fmtMs(b.ms), fmtCents(b.cost_cents)];
         if (b.stopped) bits.push('stopped'); if (b.limited) bits.push('tool budget reached');
         if (b.max_chat_chars && b.chat_chars > 0.8 * b.max_chat_chars) bits.push('this chat is getting long — start a new one soon');   // S3c: the size guard refuses the turn past the limit
-        finishAssistant(answer, b.text, bits.filter(Boolean).join(' · '));
+        finishAssistant(answer, b.text, bits.filter(Boolean).join(' · '), b.seq);
         if (b.limited && !b.stopped) keepGoingButton(answer);
       }
       else if (ev.type === 'error') { addAssistant(`${ev.message}${ev.detail ? ` — ${ev.detail}` : ''}`, { error: true }); }
@@ -628,7 +711,32 @@ async function deleteChat() {
 }
 
 // ── boot ───────────────────────────────────────────────────────────────────
+// S4b: review mode — a superuser reads one chat (Admin → Casey Chats hosts this page with ?review=<id>[&seq=<n>]).
+async function startReview() {
+  document.body.classList.add('review');
+  sendBtn.disabled = true;
+  let r;
+  try { r = await P.apiSend(`/api/casey/review/${REVIEW.id}`); }
+  catch (err) { log.innerHTML = ''; addAssistant(err && err.status === 404 ? 'No such chat.' : (err && err.message) || 'Could not open the chat', { error: true }); return; }
+  const c = r.chat || {};
+  chatId = c.id || REVIEW.id;
+  reviewCards = r.cards || {};
+  E('title').textContent = c.title || `Chat ${chatId}`;
+  setChip(c.model || '');
+  const flags = Array.isArray(r.flags) ? r.flags : [];
+  E('review').innerHTML = `Reviewing chat <b>${esc(chatId)}</b> of <b>${esc(c.user_name || ('user ' + c.user_id))}</b> · ${esc(c.model || '')} / ${esc(c.effort || '')} · prompt ${esc(c.prompt_version || '')} · started ${esc(c.created_at ? new Date(c.created_at).toLocaleString() : '')} · ${(r.messages || []).length} stored rows`
+    + (flags.length ? `<br>${flags.map((f) => `<i class="fa-solid fa-flag"></i> report #${esc(f.id)} by ${esc(f.user_name)}${f.by === 'casey' ? ' (via Casey)' : ''}${f.seq != null ? ` on message ${esc(f.seq)}` : ''}${f.resolved_at ? ' (resolved)' : ''}: ${esc(f.note)}`).join('<br>')}` : '');   // the filer's name always: `by` is client-supplied
+  renderTranscript(r.messages || []);
+  // The record as stored, for the reviewer's eyes: every row, every block, verbatim.
+  const raw = document.createElement('details'); raw.className = 'raw';
+  raw.innerHTML = '<summary>Raw stored rows (JSON)</summary>';
+  const pre = document.createElement('pre'); pre.textContent = JSON.stringify(r.messages || [], null, 1); raw.appendChild(pre);
+  log.appendChild(raw);
+  for (const f of flags) if (f.seq != null) { const el = log.querySelector(`.msg[data-seq="${Number(f.seq)}"]`); if (el) el.classList.add('flagged'); }
+  if (REVIEW.seq) { const el = log.querySelector(`.msg[data-seq="${Number(REVIEW.seq)}"]`); if (el) { el.classList.add('flagged'); if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' }); } }
+}
 async function start() {
+  if (REVIEW) return startReview();
   try { boot = await P.apiSend('/api/casey/boot'); } catch (_) { boot = null; }
   if (!boot || !boot.enabled) { log.innerHTML = '<div id="empty">Casey v2 is off.<span class="yc-hint">The shell loads the previous Casey when it is.</span></div>'; sendBtn.disabled = true; return; }
   renderModelMenu(); setChip(boot.model); showModelControl();

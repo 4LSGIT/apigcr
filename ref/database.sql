@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-23T13:53:32.800Z
+-- Generated: 2026-11-23T15:37:18.366Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:602ce3a5c42394eb3f9fb0ee432eb293
+-- Fingerprint: sha256:bbebcea943d252415ba9862192fb69ba
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2644,7 +2644,7 @@ CREATE TABLE `issue_reports` (
   `id` bigint NOT NULL,
   `user_id` int DEFAULT NULL,
   `user_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `kind` enum('problem','idea','question') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'problem',
+  `kind` enum('problem','idea','question','casey') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'problem' COMMENT 'What the reporter filed: problem / idea / question from the Help & Support button; `casey` (Casey v2 S4b) from the flag on a Casey answer or Casey''s own flag_for_review tool — its context.casey {chat_id, seq, model, prompt_version, by} names the chat, which a superuser reads in Admin → Casey Chats.',
   `note` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `page_url` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `context` json DEFAULT NULL,

@@ -54,9 +54,9 @@ describe('registry', () => {
     if (p.type === 'object' && p.properties) for (const [k, q] of Object.entries(p.properties)) { expect(k).toMatch(/^[a-z_]+$/); supported(q, `${at}.${k}`); }
     if (p.type === 'array') { expect(p.items).toBeDefined(); supported(p.items, `${at}[]`); }
   }
-  test('seven tools, each with a name, description and an object schema the checker supports', () => {
+  test('eight tools, each with a name, description and an object schema the checker supports', () => {
     const defs = tools.definitions();
-    expect(defs.map(d => d.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs', 'api_write']);
+    expect(defs.map(d => d.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs', 'api_write', 'flag_for_review']);   // S4b: flag_for_review
     for (const d of defs) {
       expect(typeof d.description).toBe('string');
       expect(d.description.length).toBeGreaterThan(40);
@@ -242,7 +242,7 @@ describe('lookup_routes', () => {
   });
   test('filters: q substring, family, method', async () => {
     const r = await tools.runTool('lookup_routes', ctx(STAFF), { q: 'casey', method: 'GET' });
-    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/boot', '/api/casey/cards/:id', '/api/casey/catalog', '/api/casey/chats', '/api/casey/chats/:id', '/api/casey/notes', '/api/casey/notes/version', '/api/casey/notes/versions', '/api/casey/tools']);   // S4a: the three notes reads (staff:can system.settings)
+    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/boot', '/api/casey/cards/:id', '/api/casey/catalog', '/api/casey/chats', '/api/casey/chats/:id', '/api/casey/notes', '/api/casey/notes/version', '/api/casey/notes/versions', '/api/casey/review', '/api/casey/review/:id', '/api/casey/tools']);   // S4a: the three notes reads (staff:can system.settings)
     expect(r.data.rows[0]).toMatchObject({ path: '/api/casey/boot', auth: 'staff', tier: 'T0', proposable: false, auto_get: false });   // S3a: a staff read, still never proposable or auto (/api/casey/*)
     expect(r.data.rows[1]).toMatchObject({ path: '/api/casey/cards/:id', auth: 'staff', tier: 'T0', proposable: false, auto_get: false });   // S3b: the card read, the same closed class
     expect(r.data.rows[2]).toMatchObject({ path: '/api/casey/catalog', auth: 'su', superuser_tool: 'casey', tier: 'T3', proposable: false, auto_get: false });

@@ -319,7 +319,7 @@ async function runTurn(db, {
   let lastSeq = 0;
   let heartbeat = null;
   const via = `casey:c${chat.id}`;
-  const toolCtx = { ...ctx, via, notes: noteDoc };
+  const toolCtx = { ...ctx, via, notes: noteDoc, turn: { chatId: chat.id, model: chat.model, promptVersion: sig, flagged: null } };   // S4b: one SHARED holder per turn — flag_for_review files once per turn and records the report id here
   const elapsedS = () => Math.round((Date.now() - started) / 1000);
 
   const fail = (status, message, detail) => { send({ type: 'error', status, message, ...(detail ? { detail } : {}) }); return { ok: false, error: { status, message, detail } }; };

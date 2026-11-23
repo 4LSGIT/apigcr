@@ -113,7 +113,7 @@ function staffOnly(req, res, next) {
 }
 // A View-as session (lib/auth.impersonation: the JWT carries viewAs /
 // impersonator) is refused on every v2 route, reads included: a transcript is
-// private to its user, superusers included (design §9 S2), and a View-as
+// private to its user (a superuser reads it only through the S4b review routes, with the elevation step-up), and a View-as
 // read would be another person reading it. v1's pane allows the read; v2
 // does not (S3a review; Fred may relax it — it is one line).
 function notViewAs(res, auth) {
@@ -435,6 +435,53 @@ router.delete('/api/casey/chats/:id', ...staff, async (req, res) => {
   } catch (err) {
     console.error('[api.casey] chat delete error:', err);
     res.status(500).json({ status: 'error', message: 'Chat delete failed' });
+  }
+});
+
+// ── S4b: the superuser's review of ANY chat ────────────────────────────────
+// Fred's ruling 2026-11-23: a superuser may read any Casey chat — patterns,
+// usage, abuse, attempts to spy or jailbreak — not only a flagged one (the
+// S2 rule "a transcript is private to its user, superusers included" ends
+// here; the manual says so to staff). The gate is the SU casey guard (JWT +
+// su + a live elevation, as the catalog and tools routes): a password step-up
+// before another person's transcript is read, and a catalog class of su / T3
+// with no new gate name. Not darkened by the flag (an investigation does not
+// wait for v2 to be on). Never a View-as session.
+//   GET /api/casey/review?user=&q=&flagged=1&before=&limit=  → { status, chats:[…] } (services/casey/chats.listForReview)
+//   GET /api/casey/review/:id                                → { status, chat, messages, cards, flags } — every stored block, the
+//                                                              thinking blocks included (nothing stripped: the record as the model saw it),
+//                                                              the chat's cards presented, the casey reports that name it
+router.get('/api/casey/review', guard, async (req, res) => {
+  if (notViewAs(res, req.auth)) return;
+  try {
+    const chats = require('../services/casey/chats'); // lazy require (convention)
+    const q = req.query || {};
+    const user = q.user != null && q.user !== '' ? Number(q.user) : null;
+    if (user !== null && !(Number.isInteger(user) && user > 0)) return res.status(400).json({ status: 'error', message: 'user must be a positive integer' });
+    let before = q.before ? String(q.before).slice(0, 32) : null;
+    if (before && !/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?)?$/.test(before)) return res.status(400).json({ status: 'error', message: 'before must be a date or datetime' });
+    if (before) before = before.replace('T', ' ').replace(/(\.\d+)?Z$/, '');   // the pool runs UTC: an ISO instant becomes the DATETIME literal MySQL compares without a truncation warning
+    const rows = await chats.listForReview(req.db, { user, q: String(q.q || '').slice(0, 120), flagged: q.flagged === '1', before, limit: q.limit });
+    res.json({ status: 'success', chats: rows });
+  } catch (err) {
+    console.error('[api.casey] review list error:', err);
+    res.status(500).json({ status: 'error', message: 'Review list failed' });
+  }
+});
+
+router.get('/api/casey/review/:id', guard, async (req, res) => {
+  if (notViewAs(res, req.auth)) return;
+  try {
+    const chats = require('../services/casey/chats'); // lazy require (convention)
+    const cards = require('../services/casey/cards'); // lazy require (convention)
+    const id = chatIdParam(req.params.id);
+    const chat = id === null ? null : await chats.getForReview(req.db, id);
+    if (!chat) return res.status(404).json({ status: 'error', message: 'No such chat' });
+    const [messages, cardList, flags] = await Promise.all([chats.loadMessages(req.db, id), cards.listForChat(req.db, id), chats.flagsForReview(req.db, id)]);
+    res.json({ status: 'success', chat, messages, cards: Object.fromEntries(cardList.map((c) => [String(c.id), c])), flags });
+  } catch (err) {
+    console.error('[api.casey] review read error:', err);
+    res.status(500).json({ status: 'error', message: 'Review read failed' });
   }
 });
 

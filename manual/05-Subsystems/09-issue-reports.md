@@ -12,6 +12,10 @@ report that otherwise never gets filed.
 Admins read them at **More → Support Inbox**, which shows unresolved reports by
 default and lets them resolve, reopen, or **respond to the sender**.
 
+### Casey reports
+
+A fourth kind, **Casey**, comes from the flag under a Casey answer (or from Casey itself, when it is stuck): the report names the chat and the message. Its detail row carries **Open chat N at message M**, which opens the conversation in Admin → Casey Chats (superuser, with the step-up). Read it there, fix the cause (a Casey Note, or the app), then respond from here as for any report; the outcomes for this kind are Fixed with a Casey Note, Fixed in the app, Casey was right, and Other. The note may be empty — the flag alone was the report.
+
 ### Responding to the sender
 
 Expand a report and press **Respond to sender**. Pick an outcome, add a message

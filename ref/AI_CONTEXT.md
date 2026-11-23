@@ -27,6 +27,18 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S4b — flag for review; a superuser reads any chat (11-23):**
+  `issue_reports.kind` gains `casey` (a flagged Casey answer; `context.casey`
+  `{chat_id, seq, model, prompt_version, by}`; a blank note allowed, the chat
+  required). The pane's flag control under every stored answer, and the
+  `flag_for_review` tool (one per turn, filed through the real route over
+  loopback as the user) file it; the Support Inbox shows a Casey card and an
+  "Open chat" link. RULING (Fred): a superuser may read ANY chat — `GET
+  /api/casey/review[/:id]` behind the SU casey guard (elevation), not darkened
+  by the flag; Admin → Casey Chats (`public/caseyReview.html`) lists every
+  user's chats and hosts the pane in review mode (`casey.html?review=<id>`).
+  The S2 "private to its user, superusers included" rule is over; the manual
+  says so. Design §9 S4b; manual 05-Subsystems/17, 09; 08-Admin-Tools/14.
 - **Casey v2 S4a — Casey Notes, the pitfalls document (11-23):** `casey_notes`
   (versions per `scope`: `global`, or a route family as `lib/routeFamilies.familyOf`
   names it; never updated or deleted — a restore is a new version) edited in
@@ -117,7 +129,7 @@ body. Governing migrations in `ref/migrations/`.*
   over prompt + tools = a chat's `prompt_version`); `services/casey/loop.js`
   `runTurn` (tool_use → `runTool` as the user → tool_result, until text; the
   stops and the budget in design §9 S2); `services/casey/chats.js` over
-  `casey_chats` / `casey_messages` (the raw block array, user-private, one turn
+  `casey_chats` / `casey_messages` (the raw block array, user-private — until S4b: a superuser reads any chat through the review routes — one turn
   per chat by a conditional claim); `POST /api/casey/turn` (NDJSON) + the chat
   routes, SU only, dark while `casey_v2_enabled`='0'. Settings `casey_v2_model`
   / `casey_v2_effort` are frozen on each chat. Volatile text (time, user) is the

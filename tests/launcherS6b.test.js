@@ -55,7 +55,7 @@ const EDITOR_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycLayoutEditor.js'
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
 const { launcher: VL, registry: REG, layouts: LAY } = loadLauncher(RAW);
 const EXTRAS = ['myTasks', 'logout', 'code'];   // casey: placed on More Features' icon row (a firm page since C4)
-const MORE_ACTIONS = ['adminCaseyNotes', ...EXTRAS];   // S4a: Casey Notes (gated system.settings) is an extra too until the firm's Admin page places it — listed for it / su only, so a staff user's More actions is still EXTRAS
+const MORE_ACTIONS = ['adminCaseyNotes', 'adminCaseyChats', ...EXTRAS];   // S4a: Casey Notes (gated system.settings) is an extra too until the firm's Admin page places it — listed for it / su only, so a staff user's More actions is still EXTRAS
 
 function slice(from, to) {
   const a = RAW.indexOf(from);

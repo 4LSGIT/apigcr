@@ -34,6 +34,7 @@
   .card.prob .n { color:var(--danger); }
   .card.idea .n { color:var(--cat-purple); }
   .card.ques .n { color:var(--accent); }
+  .card.casey .n { color:var(--cat-purple); }
   .card.resv .n { color:var(--ok); }
   .card.mail .n { color:var(--warn); }
 
@@ -75,6 +76,7 @@
   .badge.problem  { background:var(--danger-soft); color:var(--danger-on-soft); border:1px solid var(--danger); }
   .badge.idea     { background:var(--surface-2); color:var(--cat-purple); border:1px solid var(--cat-purple); }  /* no --cat-*-soft in the sheet */
   .badge.question { background:var(--accent-soft); color:var(--accent-on-soft); border:1px solid var(--accent); }
+  .badge.casey    { background:var(--surface-2); color:var(--cat-purple); border:1px solid var(--cat-purple); }   /* Casey v2 S4b: a flagged Casey answer */
   .state { font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
   .state.open { color:var(--danger); } .state.resv { color:var(--ok); }
   .muted { color:var(--text-muted); }
@@ -100,6 +102,7 @@
   .row-actions button { background:var(--surface-2); color:var(--text); border:1px solid var(--border);
     border-radius:4px; padding:4px 10px; cursor:pointer; font-size:11px; }
   .row-actions button:hover { border-color:var(--accent); }
+  .row-actions a.btn-link { display:inline-block; background:var(--surface-2); color:var(--accent); border:1px solid var(--accent); border-radius:6px; padding:4px 10px; text-decoration:none; font-size:12px; }   /* S4b: the Casey chat link */
 
   .row-actions button.primary { border-color:var(--accent); color:var(--accent); }
   .reply-ok { color:var(--ok); } .reply-bad { color:var(--warn); }
@@ -146,6 +149,7 @@
     <div class="card prob"        data-status="open"     data-kind="problem"><div class="n" id="cProb">–</div><div class="l">Problems</div></div>
     <div class="card idea"        data-status="open"     data-kind="idea"><div class="n" id="cIdea">–</div><div class="l">Ideas</div></div>
     <div class="card ques"        data-status="open"     data-kind="question"><div class="n" id="cQues">–</div><div class="l">Questions</div></div>
+    <div class="card casey"       data-status="open"     data-kind="casey"><div class="n" id="cCasey">–</div><div class="l">Casey</div></div>
     <div class="card resv"        data-status="resolved" data-kind=""><div class="n" id="cResv">–</div><div class="l">Resolved 7d</div></div>
     <div class="card mail"        data-status="all"      data-kind=""><div class="n" id="cMail">–</div><div class="l">Email failed</div></div>
   </div>
@@ -161,6 +165,7 @@
       <option value="problem">Problems</option>
       <option value="idea">Ideas</option>
       <option value="question">Questions</option>
+      <option value="casey">Casey</option>
     </select>
     <input type="text" id="fQ" placeholder="Search note or reporter… (Enter)">
     <button id="btnRefresh"><i class="fa-solid fa-rotate"></i> Refresh</button>
@@ -360,8 +365,12 @@ function detailRow(listRow) {
   let ctxJson = "";
   if (ctx) { try { ctxJson = JSON.stringify(ctx, null, 2); } catch { ctxJson = String(full.context); } }
 
+  // Casey v2 S4b: a casey report names its chat — the link opens it in Admin → Casey Chats (SU; the shell's ?open deep link, like the email's)
+  const caseyChat = full.kind === "casey" && ctx && ctx.casey && Number.isInteger(Number(ctx.casey.chat_id)) ? Number(ctx.casey.chat_id) : null;
+  const caseySeq = caseyChat != null && ctx.casey.seq != null && Number.isInteger(Number(ctx.casey.seq)) ? Number(ctx.casey.seq) : null;
   const grid = [
     ["reporter",     `${full.user_name || "—"}${full.user_id != null ? ` (user ${full.user_id})` : ""}`],
+    ["casey chat",   caseyChat != null ? `chat ${caseyChat}${caseySeq != null ? `, message ${caseySeq}` : ""}${ctx.casey.by === "casey" ? " — flagged via Casey's own flag_for_review" : ""}${ctx.casey.model ? ` · ${String(ctx.casey.model)}` : ""}` : null],
     ["filed",        full.created_at],
     ["active view",  activeView],
     ["open files",   openFiles],
@@ -383,6 +392,7 @@ function detailRow(listRow) {
 
   td.innerHTML = `
     <div class="note-blk">${esc(full.note)}</div>
+    ${caseyChat != null ? `<div class="row-actions"><a class="btn-link" href="/?open=tabPanel~adminCaseyChats~c${caseyChat}${caseySeq != null ? "~s" + caseySeq : ""}" target="_top" title="Open the chat in Admin → Casey Chats (superuser)">Open chat ${caseyChat}${caseySeq != null ? ` at message ${caseySeq}` : ""} →</a></div>` : ""}
     <div class="detail-grid">
       ${grid.map(([k, v]) => `<div class="k">${esc(k)}</div><div>${esc(v)}</div>`).join("")}
     </div>
@@ -448,6 +458,7 @@ async function load() {
     const c = data.counts;
     E("cAll").textContent  = c.open_total;    E("cProb").textContent = c.open_problem;
     E("cIdea").textContent = c.open_idea;     E("cQues").textContent = c.open_question;
+    E("cCasey").textContent = c.open_casey == null ? "–" : c.open_casey;
     E("cResv").textContent = c.resolved_7d;   E("cMail").textContent = c.never_emailed;
     setStatus(`<span class="ok">✓</span> ${total} report(s) · updated ${new Date().toLocaleTimeString()}`
       + (c.never_emailed > 0

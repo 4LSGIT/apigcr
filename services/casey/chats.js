@@ -148,7 +148,59 @@ async function deleteMessages(db, chatId, ids) {
   return r.affectedRows;
 }
 
+// ── S4b: the superuser's review (ref/CASEY_V2_DESIGN.md §4.8; Fred, 2026-11-23:
+// a superuser may read ANY chat — patterns, usage, abuse, attempts to spy or
+// jailbreak — not only a flagged one). These readers are UNSCOPED by user: the
+// route gates them (routes/api.casey.js: the SU casey guard — a superuser with a
+// live elevation, 30 a minute). Nothing
+// else in this module may use them.
+const REVIEW_MAX = 200;
+
+/**
+ * Chats across every user, newest activity first: { id, user_id, user_name, title, model, effort,
+ * prompt_version, created_at, updated_at, message_count, cost_cents, flags }. Filters: user (users.user),
+ * q (a substring of the title, LIKE-escaped), flagged (only chats a casey report names), before (an
+ * updated_at bound for paging), limit (≤ REVIEW_MAX).
+ */
+async function listForReview(db, { user = null, q = '', flagged = false, before = null, limit = 50 } = {}) {
+  const n = Math.min(Math.max(Number(limit) || 50, 1), REVIEW_MAX);
+  const where = [];
+  const params = [];
+  if (user != null) { where.push('c.user_id = ?'); params.push(Number(user)); }
+  const needle = String(q || '').trim();
+  if (needle) { where.push("c.title LIKE ? ESCAPE '\\\\'"); params.push('%' + needle.replace(/[\\%_]/g, (ch) => '\\' + ch) + '%'); }
+  if (before) { where.push('c.updated_at < ?'); params.push(before); }
+  const flagsSub = `(SELECT COUNT(*) FROM issue_reports r WHERE r.kind = 'casey' AND JSON_UNQUOTE(JSON_EXTRACT(r.context, '$.casey.chat_id')) = CAST(c.id AS CHAR))`;
+  if (flagged) where.push(`${flagsSub} > 0`);
+  const [rows] = await db.query(
+    `SELECT c.id, c.user_id, u.user_name, c.title, c.model, c.effort, c.prompt_version, c.created_at, c.updated_at,
+            (SELECT COUNT(*) FROM casey_messages m WHERE m.chat_id = c.id) AS message_count,
+            (SELECT COALESCE(SUM(a.cost_cents), 0) FROM ai_calls a WHERE a.consumer_ref = CONCAT('assistant_v2:u', c.user_id, ':c', c.id)) AS cost_cents,
+            ${flagsSub} AS flags
+       FROM casey_chats c LEFT JOIN users u ON u.user = c.user_id
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       ORDER BY c.updated_at DESC, c.id DESC LIMIT ${n}`, params);
+  return rows.map((r) => ({ ...r, id: Number(r.id), user_id: Number(r.user_id), message_count: Number(r.message_count), cost_cents: Number(r.cost_cents) || 0, flags: Number(r.flags) }));
+}
+
+/** One chat for the review, whoever owns it, with the owner's name; null when absent. */
+async function getForReview(db, id) {
+  const [[c]] = await db.query(`SELECT c.id, c.user_id, u.user_name, c.title, c.model, c.effort, c.prompt_version, c.thinking_floor_seq, c.created_at, c.updated_at
+       FROM casey_chats c LEFT JOIN users u ON u.user = c.user_id WHERE c.id = ?`, [id]);
+  return c ? { ...c, id: Number(c.id), user_id: Number(c.user_id) } : null;
+}
+
+/** The casey reports that name this chat: [{ id, seq, note, user_name, created_at, resolved_at, by }]. */
+async function flagsForReview(db, chatId) {
+  const [rows] = await db.query(
+    `SELECT id, user_name, note, created_at, resolved_at,
+            JSON_EXTRACT(context, '$.casey.seq') AS seq, JSON_UNQUOTE(JSON_EXTRACT(context, '$.casey.by')) AS flagged_by
+       FROM issue_reports WHERE kind = 'casey' AND JSON_UNQUOTE(JSON_EXTRACT(context, '$.casey.chat_id')) = CAST(? AS CHAR) ORDER BY id`, [chatId]);
+  return rows.map((r) => ({ id: Number(r.id), user_name: r.user_name, note: r.note, created_at: r.created_at, resolved_at: r.resolved_at, seq: r.seq == null ? null : Number(r.seq), by: r.flagged_by || 'user' }));   // `by` is a reserved word: aliased flagged_by in SQL
+}
+
 module.exports = {
-  TITLE_MAX, CLAIM_STALE_MIN, LIST_MAX, titleFrom, parseJson, stripThinkingBlocks,
+  TITLE_MAX, CLAIM_STALE_MIN, LIST_MAX, REVIEW_MAX, titleFrom, parseJson, stripThinkingBlocks,
   createChat, getChat, listChats, deleteChat, claimTurn, releaseTurn, requestStop, stopRequested, loadMessages, appendMessage, deleteMessages,
+  listForReview, getForReview, flagsForReview,
 };

@@ -2762,6 +2762,12 @@ edge; position-only loss, accepted.
   than substitute the literal. Under a `headers` map only credential-named
   entries are blanked; a header whose name merely contains "key" (an echoed
   `Idempotency-Key`) is blanked too — accepted.
+- **Casey v2 S4b follow-ups** (2026-11-23): the Casey Chats tile is placed on
+  the live Admin page by `scripts/caseyS4bAdminTile.snippet.js` (after Casey
+  Notes) — a data step after the deploy; a usage dashboard (per user / per
+  week counts and cost) over `casey_chats` + `ai_calls` beyond the list's
+  figures; the MCP equivalent of the flag (S5); a reviewer's shortcut from
+  the review page straight to Casey Notes with the chat's family prefilled.
 - **Casey v2 S4a follow-ups** (2026-11-23): the Casey Notes tile is placed on
   the Admin page by a DATA step (the firm's `firm:admin` page document in
   `ui_config`, edited in-app — `scripts/caseyS4aAdminTile.snippet.js`, run

@@ -57,7 +57,7 @@ test('GET /api/casey/tools: SU + elevation only; lists the six definitions and t
   expect(r.status).toBe(200);
   expect(r.body.status).toBe('success');
   expect(r.body.enabled).toBe(true);
-  expect(r.body.tools.map((t) => t.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs', 'api_write']);
+  expect(r.body.tools.map((t) => t.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs', 'api_write', 'flag_for_review']);   // S4b: flag_for_review
   expect(Object.keys(r.body.tools[0])).toEqual(['name', 'description', 'input_schema']);
   flag.value = '0';
   expect((await call('GET', '/api/casey/tools')).body.enabled).toBe(false);
@@ -103,7 +103,7 @@ test('a tool that reads the catalog gets THIS app (req.app): lookup_routes finds
   expect(r.body.ok).toBe(true);
   expect(r.body.data.rows.map((x) => `${x.method} ${x.path}`).sort()).toEqual([
     'DELETE /api/casey/chats/:id', 'GET /api/casey/boot', 'GET /api/casey/cards/:id', 'GET /api/casey/catalog', 'GET /api/casey/chats', 'GET /api/casey/chats/:id',
-    'GET /api/casey/notes', 'GET /api/casey/notes/version', 'GET /api/casey/notes/versions', 'GET /api/casey/tools',
+    'GET /api/casey/notes', 'GET /api/casey/notes/version', 'GET /api/casey/notes/versions', 'GET /api/casey/review', 'GET /api/casey/review/:id', 'GET /api/casey/tools',
     'POST /api/casey/cards/:id/claim', 'POST /api/casey/cards/:id/decline', 'POST /api/casey/cards/:id/settle', 'POST /api/casey/notes/restore', 'POST /api/casey/tools/:name', 'POST /api/casey/turn', 'POST /api/casey/turn/resume', 'POST /api/casey/turn/stop', 'PUT /api/casey/notes']);
   // S3a: the catalog and tools routes stay SU (T3); the chat routes are staff (/api/casey/* is never proposable or auto either way).
   expect(r.body.data.rows.filter((x) => /catalog|tools/.test(x.path)).every((x) => x.auth === 'su' && x.tier === 'T3' && x.you.allowed === true)).toBe(true);

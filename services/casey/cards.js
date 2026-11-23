@@ -104,6 +104,17 @@ async function getCard(db, id, userId) {
   return shapeCard(c, steps.map(shapeStep));
 }
 
+/** S4b: every card of a chat, whoever owns it, presented (the review read — routes/api.casey.js gates it to a superuser). */
+async function listForChat(db, chatId) {
+  const [cs] = await db.query(`SELECT ${CARD_COLS} FROM casey_cards WHERE chat_id = ? ORDER BY id`, [chatId]);
+  const out = [];
+  for (const c of cs) {
+    const [steps] = await db.query(`SELECT ${STEP_COLS} FROM casey_card_steps WHERE card_id = ? ORDER BY step_no`, [Number(c.id)]);
+    out.push(present(shapeCard(c, steps.map(shapeStep))));
+  }
+  return out;
+}
+
 /** The chat's open card (proposed or approved — one at most by construction: a turn ends on its card), or null. */
 async function openCard(db, chatId, userId) {
   const [[c]] = await db.query(
@@ -311,5 +322,5 @@ function present(card) {
 
 module.exports = {
   RESULT_MAX, SUMMARY_MAX, PURPOSE_MAX, NOTE_MAX, MAX_STEPS, OPEN, IMPLICIT_DECLINE_NOTE,
-  idemKey, resultText, storedResult, createCard, getCard, openCard, unresolvedCard, claimStep, settleStep, declineCard, resumeCard, revertResume, resolveForTurn, outcomeText, present,
+  idemKey, resultText, storedResult, createCard, getCard, listForChat, openCard, unresolvedCard, claimStep, settleStep, declineCard, resumeCard, revertResume, resolveForTurn, outcomeText, present,
 };

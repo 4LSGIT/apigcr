@@ -284,7 +284,7 @@ test('a whole turn as NDJSON: headers, event order, tools run as the SU over loo
   // What the model was sent: two requests, the second carrying the tool results of the SU's own identity and the loopback GET.
   expect(apiBodies).toHaveLength(2);
   expect(apiBodies[0]).toMatchObject({ model: 'claude-opus-5-5', output_config: { effort: 'medium' }, thinking: { type: 'adaptive' }, stream: true });
-  expect(apiBodies[0].tools.map((t) => t.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs', 'api_write']);
+  expect(apiBodies[0].tools.map((t) => t.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs', 'api_write', 'flag_for_review']);
   expect(apiBodies[0].thinking).toEqual({ type: 'adaptive', display: 'summarized' });
   expect(apiBodies[0].messages[0].content[0].text).toMatch(/\nPage: Cases tab$/);
   const results = apiBodies[1].messages[2].content;

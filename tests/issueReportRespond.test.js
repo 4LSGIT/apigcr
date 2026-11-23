@@ -43,7 +43,7 @@ function loadYcSubTab() {
 
 describe('issueReportService — outcomes and the reply email', () => {
   test('every report kind has outcomes; keys fit the column and are unique per kind', () => {
-    expect(Object.keys(S.OUTCOMES).sort()).toEqual(['idea', 'problem', 'question']);   // = api.issueReports VALID_KINDS
+    expect(Object.keys(S.OUTCOMES).sort()).toEqual(['casey', 'idea', 'problem', 'question']);   // = api.issueReports VALID_KINDS (casey: Casey v2 S4b)
     for (const [kind, outs] of Object.entries(S.OUTCOMES)) {
       const keys = outs.map((o) => o.key);
       expect(new Set(keys).size).toBe(keys.length);
@@ -132,14 +132,14 @@ describe('api.issueReports — the notification buttons and the respond gate', (
     app.use(require('../routes/api.issueReports'));
     return app;
   }
-  const token = (roles) => jwt.sign({ sub: 6, username: 'IT', user_type: 1, aud: 'staff', user_auth: 'authorized', roles },
+  const token = (roles, sub = 6) => jwt.sign({ sub, username: 'IT', user_type: 1, aud: 'staff', user_auth: 'authorized', roles },
     process.env.JWT_SECRET, { expiresIn: '5m' });
-  function call(app, method, url, body, roles = ['staff']) {
+  function call(app, method, url, body, roles = ['staff'], sub = 6) {   // sub: the route's limiter is 10 reports per 10 min PER USER, in-process — a test that files many uses its own
     return new Promise((resolve, reject) => {
       const srv = http.createServer(app).listen(0, async () => {
         try {
           const res = await fetch(`http://127.0.0.1:${srv.address().port}${url}`, { method,
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token(roles) },
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token(roles, sub) },
             body: body ? JSON.stringify(body) : undefined });
           resolve({ status: res.status, body: await res.json() });
         } catch (e) { reject(e); } finally { srv.close(); }
@@ -163,6 +163,35 @@ describe('api.issueReports — the notification buttons and the respond gate', (
       ['Open in Support Inbox', base],
     ]);
     expect(sentMail().text).toContain(`Respond: ${base}\n`);
+  });
+
+  test('S4b a casey report: a blank note is allowed (the stored default) and its chat is required; the email names the kind; the reply buttons are the kind\'s outcomes', async () => {
+    const app = appWith({ user_name: 'Shoshana', email: 's@example.test' });
+    const U = 901;   // this test files more than the limiter allows one user in the window
+    const noChat = await call(app, 'POST', '/api/issue-reports', { kind: 'casey', note: '', context: { casey: {} } }, ['staff'], U);
+    expect(noChat.status).toBe(400);
+    expect(noChat.body.error).toMatch(/context\.casey\.chat_id/);
+    const blankOther = await call(app, 'POST', '/api/issue-reports', { kind: 'problem', note: '  ', context: { casey: { chat_id: 23 } } }, ['staff'], U);
+    expect(blankOther.status).toBe(400);   // only a casey report may come without words
+    for (const bad of [[23], true, { n: 23 }, '0', -1, 'abc']) expect([bad, (await call(app, 'POST', '/api/issue-reports', { kind: 'casey', note: 'n', context: { casey: { chat_id: bad } } }, ['staff'], 902)).status]).toEqual([bad, 400]);
+    // a numeric string is stored as the NUMBER the review joins on
+    const stored = [];
+    const appRec = (() => { const a = express(); a.use(express.json()); a.use((req, _res, next) => { req.db = { query: async (sql, params) => { const s = String(sql); if (/SELECT user_name, email FROM users/.test(s)) return [[{ user_name: 'S', email: null }], []]; if (/INSERT INTO issue_reports/.test(s)) { stored.push(params); return [{ insertId: 42 }, []]; } return [{ affectedRows: 1 }, []]; } }; next(); }); a.use(require('../routes/api.issueReports')); return a; })();
+    expect((await call(appRec, 'POST', '/api/issue-reports', { kind: 'casey', note: 'n', context: { casey: { chat_id: ' 5 ', seq: '3' } } }, ['staff'], 903)).status).toBe(201);
+    expect(JSON.parse(stored[0][5]).casey).toEqual({ chat_id: 5, seq: 3 });
+    // a crafted context too large to keep (24 KB: packContext drops it for a marker) cannot file a casey report that names no chat
+    expect((await call(appRec, 'POST', '/api/issue-reports', { kind: 'casey', note: 'n', context: { casey: { chat_id: 5 }, pad: 'x'.repeat(30000) } }, ['staff'], 904)).status).toBe(400);
+    expect(stored).toHaveLength(1);
+    const r = await call(app, 'POST', '/api/issue-reports', { kind: 'casey', note: '', page_url: 'https://app.test/casey.html', context: { casey: { chat_id: 23, seq: 4, model: 'claude-opus-5-5', prompt_version: 'v2.5-x', by: 'user' } } }, ['staff'], U);
+    expect(r).toMatchObject({ status: 201, body: { id: 41, emailed: true } });
+    const mail = emailService.sendEmail.mock.calls[emailService.sendEmail.mock.calls.length - 1][1];   // the latest filing's email (the stored-number case above emailed first)
+    expect(mail.subject).toMatch(/Casey report/);
+    expect(mail.text).toContain('Flagged for review (no note).');
+    expect(mail.html).toContain('&quot;chat_id&quot;: 23');   // the full context, escaped
+    const links = hrefs(mail.html);
+    const base = 'https://app.4lsg.com/?open=tabPanel~adminSupportInbox~r41';
+    expect(links.map(([label]) => label)).toEqual(['Reply: Fixed with a Casey Note', 'Reply: Fixed in the app', 'Reply: Casey was right', 'Reply: Other', 'Open in Support Inbox']);
+    expect(links[0][1]).toBe(`${base}~noted`);
   });
 
   test('a filer with no email gets no reply buttons — the email says why', async () => {
@@ -213,10 +242,10 @@ function bootPane({ held = null, full = {}, respond = { ok: true, resolved: true
       sent.push({ url, method, body });
       if (method === 'GET' && url.startsWith('/api/issue-reports?')) {
         return { rows: [row], total: 1, limit: 50, offset: 0,
-          counts: { open_total: 1, open_problem: 1, open_idea: 0, open_question: 0, resolved_7d: 0, never_emailed: 0 } };
+          counts: { open_total: 1, open_problem: 1, open_idea: 0, open_question: 0, resolved_7d: 0, never_emailed: 0, ...(row.kind === 'casey' ? { open_casey: 1 } : {}) } };
       }
       if (method === 'GET' && /^\/api\/issue-reports\/\d+$/.test(url)) {
-        return { row: { ...row, context: null }, reply_to: replyTo, outcomes: S.outcomesFor(row.kind) };
+        return { row: { ...row, context: full.context === undefined ? null : full.context }, reply_to: replyTo, outcomes: S.outcomesFor(row.kind) };
       }
       if (method === 'POST' && /\/respond$/.test(url)) return typeof respond === 'function' ? respond() : respond;
       return {};
@@ -234,6 +263,28 @@ function bootPane({ held = null, full = {}, respond = { ok: true, resolved: true
 }
 async function settle() { for (let i = 0; i < 6; i++) await flush(); }
 const checked = (d) => (d.querySelector('#rdOuts input:checked') || {}).value;
+
+describe('issueReports.html — a Casey report (S4b)', () => {
+  test('the Casey card counts it; the detail row links "Open chat N at message M" into Admin → Casey Chats (the shell\'s deep link, whole-window) and names who flagged', async () => {
+    const ctx = JSON.stringify({ casey: { chat_id: 23, seq: 5, model: 'claude-opus-5-5', prompt_version: 'v2.5-x', by: 'casey' } });
+    const { d } = bootPane({ held: 'r14', full: { kind: 'casey', note: 'Flagged for review (no note).', context: ctx } });
+    await settle();
+    expect(d.getElementById('cCasey').textContent).toBe('1');
+    expect(d.querySelector('tr.detail')).not.toBeNull();
+    const a = d.querySelector('tr.detail a.btn-link');
+    expect(a.getAttribute('href')).toBe('/?open=tabPanel~adminCaseyChats~c23~s5');
+    expect(a.getAttribute('target')).toBe('_top');
+    expect(a.textContent).toBe('Open chat 23 at message 5 →');
+    expect(d.querySelector('tr.detail .detail-grid').textContent).toContain("chat 23, message 5 — flagged via Casey's own flag_for_review · claude-opus-5-5");
+    expect(d.querySelector('tr.detail .badge, td .badge.casey')).not.toBeNull();
+    expect([...d.querySelectorAll('#rdOuts input')].map((i) => i.value)).toEqual(['noted', 'fixed', 'by_design', 'other']);
+    // a problem report has no link, and the Casey card reads – without the count
+    const plain = bootPane({ held: 'r14' });
+    await settle();
+    expect(plain.d.querySelector('tr.detail a.btn-link')).toBeNull();
+    expect(plain.d.getElementById('cCasey').textContent).toBe('–');
+  });
+});
 
 describe('issueReports.html — Respond to sender', () => {
   test('the email link (r<id>~<outcome>) opens the dialog preselected, shows every status, and clears the rest', async () => {

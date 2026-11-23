@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Casey Chats</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<script src="/js/ycSubTab.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="/js/diag.js"></script>
+<style>
+  /* Casey v2 S4b — Admin → Casey Chats (SU): every Casey chat of every user, and
+     the transcript of one, read-only, for review (ref/CASEY_V2_DESIGN.md §4.8).
+     Palette from /theme.css like the other Admin panes. */
+  html, body { margin:0; padding:0; height:100%; background:var(--page-bg); color:var(--text);
+    font-family:-apple-system, Segoe UI, Roboto, sans-serif; font-size:13px; }
+  .main { display:flex; flex-direction:column; height:100vh; min-width:0; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 10px; background:var(--surface); border-bottom:1px solid var(--border); }
+  .bar input[type=text] { flex:1 1 160px; min-width:0; }
+  .bar select { max-width:100%; min-width:0; }
+  .bar label { white-space:nowrap; }
+  .body { display:flex; flex:1 1 auto; min-height:0; min-width:0; }
+  .list { flex:0 0 min(420px, 100%); max-width:100%; overflow:auto; border-right:1px solid var(--border); min-width:0; }
+  .list table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  .list th, .list td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
+  .list th { color:var(--text-muted, var(--text)); font-weight:600; position:sticky; top:0; background:var(--surface); }
+  .list tr.row { cursor:pointer; }
+  .list tr.row:hover td { background:var(--hover, var(--surface-2)); }
+  .list tr.row.cur td { background:var(--surface-2); }
+  .list td.t { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .list td.n { white-space:nowrap; text-align:right; }
+  .list .flag { color:var(--danger); }
+  .view { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+  .view iframe { flex:1 1 auto; width:100%; border:0; background:var(--page-bg); min-height:0; }
+  .view .empty { padding:30px; text-align:center; color:var(--text-muted, var(--text)); }
+  .status { padding:4px 10px; font-size:12px; color:var(--text-muted, var(--text)); min-height:16px; }
+  .status.err { color:var(--danger); }
+  .denied { padding:40px; text-align:center; color:var(--danger); }
+  @media (max-width: 800px) {
+    .body { flex-direction:column; }
+    .list { flex:0 0 40vh; border-right:0; border-bottom:1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+<div class="main" id="main" hidden>
+  <div class="bar">
+    <strong><i class="fa-solid fa-comments"></i> Casey Chats</strong>
+    <select id="fUser" aria-label="User"><option value="">Every user</option></select>
+    <input type="text" id="fQ" placeholder="Search titles… (Enter)" aria-label="Search titles">
+    <label><input type="checkbox" id="fFlagged"> flagged only</label>
+    <button type="button" id="refresh" title="Reload the list"><i class="fa-solid fa-rotate"></i></button>
+  </div>
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+  <div class="body">
+    <div class="list">
+      <table>
+        <thead><tr><th>Chat</th><th>User</th><th>Last</th><th>Msgs</th><th>Cost</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="view" id="view"><div class="empty" id="viewEmpty">Pick a chat to read it. Every stored block is shown as the model saw it; nothing can be sent from here.</div></div>
+  </div>
+</div>
+<script>
+// ── parent-bridge auth (the Admin pane pattern: issueReports.html) ───────────
+const P = window.parent;
+function api(endpoint, method = 'GET', payload = null, headers, opts) {
+  if (!P || !P.apiSend) throw new Error('This page must be loaded inside the admin app.');
+  return P.apiSend(endpoint, method, payload, headers, opts);
+}
+// The transcript is the real Casey pane (casey.html?review=<id>) in an iframe whose PARENT is this page:
+// it reaches the shell's apiSend through this passthrough (the pane calls `P.apiSend` on its parent).
+window.apiSend = (...a) => P.apiSend(...a);
+const E = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Cosmetic gate (the routes are superuser + elevation: routes/api.casey.js guard).
+(function checkAccess() {
+  if (!P || P === window) { document.body.innerHTML = '<div class="denied">Not authenticated.</div>'; return; }
+  const u = P.firmData && P.firmData.currentUser;
+  if (!u) { setTimeout(checkAccess, 100); return; }
+  if (!String(u.roles || '').split(',').map((r) => r.trim()).includes('su')) { document.body.innerHTML = '<div class="denied">Casey Chats is for superusers.</div>'; return; }
+  E('main').hidden = false;
+  wire();
+  setTimeout(boot, 0);
+})();
+
+let chats = [];
+let current = null;   // the open chat id
+function setStatus(t, cls) { const s = E('status'); s.textContent = t || ''; s.className = 'status' + (cls ? ' ' + cls : ''); }
+function fmtTs(ts) { if (!ts) return ''; const d = new Date(ts); return isNaN(d) ? String(ts) : d.toLocaleString(); }
+function fmtCents(c) { const n = Number(c); return n ? (n < 1 ? n.toFixed(2) + '¢' : n < 100 ? n.toFixed(1) + '¢' : '$' + (n / 100).toFixed(2)) : ''; }
+
+function renderUsers() {
+  const sel = E('fUser'); const keep = sel.value;
+  const users = new Map(); for (const c of chats) if (!users.has(c.user_id)) users.set(c.user_id, c.user_name || ('#' + c.user_id));
+  sel.innerHTML = '<option value="">Every user</option>' + [...users.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]))).map(([id, name]) => `<option value="${id}">${esc(name)}</option>`).join('');
+  sel.value = keep; if (sel.value !== keep) sel.value = '';
+}
+function renderRows() {
+  const tb = E('rows');
+  if (!chats.length) { tb.innerHTML = '<tr><td colspan="6" class="status">No chats match.</td></tr>'; return; }
+  tb.innerHTML = chats.map((c) => `<tr class="row${c.id === current ? ' cur' : ''}" data-id="${c.id}">
+    <td class="t" title="${esc(c.title)}">${esc(c.title)}</td><td>${esc(c.user_name || ('#' + c.user_id))}</td><td class="n">${esc(fmtTs(c.updated_at))}</td>
+    <td class="n">${c.message_count}</td><td class="n">${esc(fmtCents(c.cost_cents))}</td><td class="n">${c.flags ? `<span class="flag" title="${c.flags} report(s)"><i class="fa-solid fa-flag"></i> ${c.flags}</span>` : ''}</td></tr>`).join('');
+}
+async function load() {
+  const p = new URLSearchParams();
+  if (E('fUser').value) p.set('user', E('fUser').value);
+  if (E('fQ').value.trim()) p.set('q', E('fQ').value.trim());
+  if (E('fFlagged').checked) p.set('flagged', '1');
+  p.set('limit', '100');
+  const mine = ++loadReq;
+  const r = await api('/api/casey/review?' + p.toString());
+  if (mine !== loadReq) return;   // a later load answered first: never paint an older filter's result
+  chats = r.chats || [];
+  if (!E('fUser').value) renderUsers();   // the user menu is the unfiltered list's users
+  renderRows();
+}
+let loadReq = 0;
+function openChatReview(id, seq) {
+  current = id;
+  const view = E('view');
+  view.innerHTML = '';
+  const fr = document.createElement('iframe');
+  fr.title = 'Casey chat ' + id;
+  fr.src = `/casey.html?review=${encodeURIComponent(id)}${seq ? '&seq=' + encodeURIComponent(seq) : ''}`;
+  view.appendChild(fr);
+  renderRows();
+}
+async function boot() {
+  try { await load(); setStatus(chats.length >= 100 ? 'The latest 100 chats — narrow by user or title for older ones' : `${chats.length} chat(s)`); } catch (e) { setStatus('Could not load the chats: ' + (e && e.message || e), 'err'); }
+  // The deep link from a Support Inbox report: ?open=tabPanel~adminCaseyChats~c<chat>[~s<seq>] (the shell hands this frame the rest, once).
+  try {
+    const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
+    const segs = window.ycSubTab ? (ycSubTab.parse(held) || []) : [];
+    const m = /^c(\d{1,12})$/.exec(String(segs[0] || ''));
+    if (m) { if (window.ycSubTab) ycSubTab.leaf.report(''); const s = /^s(\d{1,9})$/.exec(String(segs[1] || '')); openChatReview(Number(m[1]), s ? Number(s[1]) : null); }
+  } catch (_) { /* no deep link */ }
+}
+function wire() {
+  E('rows').addEventListener('click', (ev) => { const tr = ev.target.closest('tr.row'); if (tr) openChatReview(Number(tr.dataset.id), null); });
+  E('fUser').addEventListener('change', () => boot());
+  E('fFlagged').addEventListener('change', () => boot());
+  E('fQ').addEventListener('keydown', (e) => { if (e.key === 'Enter') boot(); });
+  E('refresh').addEventListener('click', () => boot());
+}
+</script>
+</body>
+</html>

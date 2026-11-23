@@ -2,7 +2,7 @@
 //
 // Design: ref/CASEY_V2_DESIGN.md §4.1–4.2, §8.4–8.5; as built: §9.
 //
-// Seven plain functions `run(ctx, input) → data`, each described once with a
+// Eight plain functions `run(ctx, input) → data`, each described once with a
 // JSON-schema `input_schema`, so the in-app loop (S2) and the MCP server (S5)
 // expose the same tools unchanged. Nothing here calls a model. S3b adds
 // api_write, which stores a CARD instead of acting (services/casey/cards.js);
@@ -51,6 +51,7 @@ const TOOLS = Object.freeze([
   require('./read_source'),
   require('./search_docs'),
   require('./api_write'),
+  require('./flag_for_review'),   // S4b: files THIS chat for review, as the user, through the real report route
 ]);
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
