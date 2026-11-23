@@ -65,4 +65,5 @@ module.exports = {
     }));
     return { count: all.length, returned: rows.length, truncated: all.length > rows.length, rows };
   },
+  judge,   // shared with api_write (S3b): the same verdict decides whether a step may go on a card for this user
 };

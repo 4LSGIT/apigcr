@@ -45,20 +45,42 @@ const ctx = (auth, extra = {}) => ({ db: dbStub, auth, app, headers: {}, ip: '10
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('registry', () => {
-  test('six tools, each with a name, description and an object schema the checker supports', () => {
+  // What the checker supports (services/casey/tools/index.js checkValue): scalars, a string-map object
+  // (additionalProperties), a free object (no properties — api_write's body), a nested object with
+  // properties (checked like an input), an array with items. Every schema here is made of these only.
+  function supported(p, at) {
+    expect(['string', 'integer', 'number', 'boolean', 'object', 'array']).toContain(p.type);
+    if (p.type === 'object' && p.additionalProperties) expect(p.additionalProperties.type).toBe('string');
+    if (p.type === 'object' && p.properties) for (const [k, q] of Object.entries(p.properties)) { expect(k).toMatch(/^[a-z_]+$/); supported(q, `${at}.${k}`); }
+    if (p.type === 'array') { expect(p.items).toBeDefined(); supported(p.items, `${at}[]`); }
+  }
+  test('seven tools, each with a name, description and an object schema the checker supports', () => {
     const defs = tools.definitions();
-    expect(defs.map(d => d.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs']);
+    expect(defs.map(d => d.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs', 'api_write']);
     for (const d of defs) {
       expect(typeof d.description).toBe('string');
       expect(d.description.length).toBeGreaterThan(40);
       expect(d.input_schema.type).toBe('object');
       for (const [k, p] of Object.entries(d.input_schema.properties)) {
-        expect(['string', 'integer', 'number', 'boolean', 'object']).toContain(p.type);
-        if (p.type === 'object') expect(p.additionalProperties && p.additionalProperties.type).toBe('string');
         expect(k).toMatch(/^[a-z_]+$/);
+        supported(p, k);
       }
       expect(Object.keys(d)).toEqual(['name', 'description', 'input_schema']); // run / untrusted never leave the process
     }
+  });
+  test('checkInput (S3b): arrays with bounds and items, nested objects with their own required / unknown keys, a free object', () => {
+    const schema = { type: 'object', properties: {
+      steps: { type: 'array', minItems: 1, maxItems: 2, items: { type: 'object', properties: { method: { type: 'string', enum: ['POST'] }, body: { type: 'object' } }, required: ['method'] } },
+    }, required: ['steps'] };
+    expect(tools.checkInput(schema, { steps: [{ method: 'POST', body: { any: [1, { deep: true }] } }] })).toBeNull();
+    expect(tools.checkInput(schema, { steps: [] })).toBe('steps needs at least 1 item');
+    expect(tools.checkInput(schema, { steps: [{ method: 'POST' }, { method: 'POST' }, { method: 'POST' }] })).toBe('steps has more than 2 items');
+    expect(tools.checkInput(schema, { steps: [{ body: {} }] })).toBe('steps[0]: missing required input: method');
+    expect(tools.checkInput(schema, { steps: [{ method: 'POST', nope: 1 }] })).toBe('steps[0]: unknown input key: nope');
+    expect(tools.checkInput(schema, { steps: [{ method: 'GET' }] })).toBe('steps[0]: method must be one of POST');
+    expect(tools.checkInput(schema, { steps: [{ method: 'POST', body: 'x' }] })).toBe('steps[0]: body must be object, got string');
+    expect(tools.checkInput(schema, { steps: 'x' })).toBe('steps must be array, got string');
+    expect(tools.checkInput(schema, { steps: ['x'] })).toBe('steps[0] must be object, got string');
   });
 
   test('checkInput: unknown key, missing required, wrong type, enum, bounds, nested object values', () => {
@@ -206,9 +228,10 @@ describe('lookup_routes', () => {
   });
   test('filters: q substring, family, method', async () => {
     const r = await tools.runTool('lookup_routes', ctx(STAFF), { q: 'casey', method: 'GET' });
-    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/boot', '/api/casey/catalog', '/api/casey/chats', '/api/casey/chats/:id', '/api/casey/tools']);
+    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/boot', '/api/casey/cards/:id', '/api/casey/catalog', '/api/casey/chats', '/api/casey/chats/:id', '/api/casey/tools']);
     expect(r.data.rows[0]).toMatchObject({ path: '/api/casey/boot', auth: 'staff', tier: 'T0', proposable: false, auto_get: false });   // S3a: a staff read, still never proposable or auto (/api/casey/*)
-    expect(r.data.rows[1]).toMatchObject({ path: '/api/casey/catalog', auth: 'su', superuser_tool: 'casey', tier: 'T3', proposable: false, auto_get: false });
+    expect(r.data.rows[1]).toMatchObject({ path: '/api/casey/cards/:id', auth: 'staff', tier: 'T0', proposable: false, auto_get: false });   // S3b: the card read, the same closed class
+    expect(r.data.rows[2]).toMatchObject({ path: '/api/casey/catalog', auth: 'su', superuser_tool: 'casey', tier: 'T3', proposable: false, auto_get: false });
     const f = await tools.runTool('lookup_routes', ctx(STAFF), { family: '/api/tasks' });
     expect(f.data.count).toBeGreaterThan(0);
     expect(f.data.rows.every(x => x.family === '/api/tasks')).toBe(true);

@@ -12,7 +12,17 @@
      by line into the trail, GET/DELETE /api/casey/chats, POST /api/casey/turn/stop.
      The page context (which file or tab the user is on) comes from the shell's
      ycAssistantContext() and rides as `context` on the turn — the loop puts it in
-     the user message's context block, never in the prompt prefix. -->
+     the user message's context block, never in the prompt prefix.
+     S3b — cards (§4.4–4.5, §8.6): a `card` line ends a turn; the card renders with
+     the model's summary, each step's method / path / purpose, the server-rendered
+     content block (open on T2 / T3, under Details on T1) and the exact JSON body.
+     Approve runs the steps IN THIS PAGE, as the user, through the parent's apiSend:
+     claim the step in the ledger (POST /api/casey/cards/:id/claim), send the body
+     STRING exactly as stored with Idempotency-Key casey:<card>:<step>, settle the
+     result (…/settle), stop at the first failure; then POST /api/casey/turn/resume
+     streams the model's reaction. Decline (…/decline, optional note) resumes too. A
+     claimed step that never settled shows as unknown and is never re-sent. A
+     superuser route's elevation prompt is apiSend's own. -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
@@ -63,6 +73,31 @@
   .meta { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
   .keep { margin-top: 6px; }
 
+  /* S3b: a card — a write the model proposes and the user approves here. */
+  .card { align-self: stretch; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 10px; padding: 10px 12px; background: var(--surface, transparent); min-width: 0; }
+  .card.t2 { border-left-color: var(--warn); } .card.t3 { border-left-color: var(--danger); }
+  .card .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .card .head .summary { font-weight: 600; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .card .badge { font-size: 11px; border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; white-space: nowrap; color: var(--text-muted); }
+  .card .badge.su { color: var(--danger); border-color: var(--danger); font-weight: 600; }
+  .card .warn { font-size: 12px; color: var(--warn-text, var(--warn)); margin: 4px 0 0; }
+  .card .steps { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 0; }
+  .card .cstep .line { display: flex; gap: 6px; align-items: baseline; min-width: 0; font-size: 13px; }
+  .card .cstep .st { flex: 0 0 auto; width: 14px; text-align: center; color: var(--text-muted); }
+  .card .cstep.applied .st { color: var(--ok); } .card .cstep.failed .st, .card .cstep.unknown .st { color: var(--danger); }
+  .card .cstep .m { font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
+  .card .cstep .why { color: var(--text-muted); font-size: 12px; margin-left: 20px; overflow-wrap: anywhere; }
+  .card .cstep .outcome { font-size: 12px; margin-left: 20px; overflow-wrap: anywhere; }
+  .card .cstep.failed .outcome, .card .cstep.unknown .outcome { color: var(--danger); }
+  .card .fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 4px 0 0 20px; font-size: 12px; max-width: 100%; }
+  .card .fields dt { color: var(--text-muted); white-space: nowrap; } .card .fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; min-width: 0; }
+  .card details { margin: 4px 0 0 20px; font-size: 12px; } .card details summary { cursor: pointer; color: var(--text-muted); }
+  .card details pre { margin: 4px 0 0; font-size: 11px; max-height: 240px; overflow: auto; background: var(--hover); border-radius: 6px; padding: 6px; white-space: pre-wrap; word-break: break-all; }
+  .card .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .card .actions input { flex: 1 1 140px; min-width: 0; font: inherit; font-size: 12px; padding: 5px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface, var(--page-bg)); color: var(--text); }
+  .card .state { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+  .card .state.err { color: var(--danger); }
+
   #compose { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--sidebar-bg, var(--page-bg)); }
   #compose .row { display: flex; gap: 6px; align-items: flex-end; }
   #text { flex: 1 1 auto; min-width: 0; min-height: 40px; max-height: 160px; resize: vertical; font: inherit; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface, var(--page-bg)); color: var(--text); }
@@ -99,6 +134,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':
 const E = (id) => document.getElementById(id);
 const CONTEXT_PREFIX = '[context — refreshed each turn]';
 const MENU_REFUSAL = 'That model is not on the menu';   // the loop's 400 for a pick the firm's menu no longer allows (S3a-2)
+const IMPLICIT_NOTE = 'the user continued the conversation without acting on the card';   // the server's own implicit-decline note (services/casey/cards.js IMPLICIT_DECLINE_NOTE), shown live before the reload would
 
 // ── a small, safe markdown renderer: escape everything first, then mark up ──
 // headings, bold, inline code, fenced code, bullet / numbered lists, pipe tables.
@@ -142,6 +178,7 @@ let chats = [];             // the list
 let contextOn = true;       // the shell's workspace context is attached to the next turn
 let stopPending = false;    // Stop pressed before this turn's `chat` line (the claim is taken by then): posted when it lands
 let turnClaimed = false;    // this turn's `chat` line has arrived
+const cardEls = new Map();  // card id → its element (S3b)
 
 const log = E('log'), textEl = E('text'), sendBtn = E('send'), stopBtn = E('stop'), pick = E('chatPick'), chip = E('modelChip'), modelPick = E('modelPick');
 
@@ -159,6 +196,7 @@ function addUser(text) {
   const d = document.createElement('div'); d.className = 'msg user'; d.textContent = text; log.appendChild(d); scrollDown();
 }
 function newTrail() { const t = document.createElement('div'); t.className = 'trail'; log.appendChild(t); return t; }
+function trailNote(trail, text) { const n = document.createElement('div'); n.className = 'note'; n.textContent = text; trail.appendChild(n); scrollDown(); }
 function trailStep(trail, { id, name, input, ok, code, ms, status }) {
   let step = Array.from(trail.querySelectorAll('.step')).find((s) => s.dataset.id === String(id)) || null;
   if (!step) {
@@ -200,6 +238,158 @@ function keepGoingButton(d) {
   d.appendChild(b);
 }
 
+// ── S3b: cards ─────────────────────────────────────────────────────────────
+// A card element is rendered from the server's card object (GET /api/casey/cards/:id
+// or the turn's `card` line) and re-rendered in place as its steps run. The JSON
+// shown under Details is the step's stored body text — the very string apiSend sends.
+const STEP_ICON = { pending: 'fa-regular fa-circle', claimed: 'fa-solid fa-circle-notch fa-spin', applied: 'fa-solid fa-check', failed: 'fa-solid fa-xmark', declined: 'fa-solid fa-minus', skipped: 'fa-solid fa-minus', unknown: 'fa-solid fa-question' };
+function stepOutcome(s) {
+  if (s.status === 'applied') return `applied${s.http_status ? ` (HTTP ${s.http_status})` : ''}`;
+  if (s.status === 'failed') { const r = s.result && typeof s.result === 'object' ? (s.result.message || s.result.error) : s.result; return `failed${s.http_status ? ` (HTTP ${s.http_status})` : ''}${r ? ` — ${typeof r === 'string' ? r : JSON.stringify(r)}` : ''}`; }
+  if (s.status === 'claimed' || s.status === 'unknown') return 'unknown — the request was sent but no answer was recorded; check the record before repeating it';
+  if (s.status === 'skipped') return 'not run';
+  if (s.status === 'declined') return 'not run (declined)';
+  return '';
+}
+function cardStateLine(card) {
+  if (card.status === 'resumed') return card.steps.length && card.steps.every((s) => s.status === 'declined') ? (card.decline_note === IMPLICIT_NOTE ? 'Not acted on — you continued the conversation instead. Casey was told.' : `Declined${card.decline_note ? ` — ${card.decline_note}` : ''}. Casey was told.`) : 'Done — Casey was told the result.';
+  if (card.status === 'declined') return `Declined${card.decline_note ? ` — ${card.decline_note}` : ''}.`;
+  if (card.status === 'approved') return card.steps.some((s) => s.status === 'claimed') ? 'A step is in an unknown state.' : card.steps.some((s) => s.status === 'failed') ? 'Stopped at a failed step.' : card.steps.every((s) => s.status === 'applied') ? 'All steps applied.' : 'Partly run.';
+  return '';
+}
+function renderCardInto(el, card) {
+  el.className = `card t${card.tier}`; el.dataset.cardId = card.id; el.dataset.status = card.status;
+  const open = card.tier >= 2;   // T2 / T3: the exact content shown open; T1: under Details
+  const steps = card.steps.map((s) => {
+    const status = s.status === 'claimed' && !el.dataset.running ? 'unknown' : s.status;
+    const fields = `<dl class="fields">${(s.content && s.content.fields || []).map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}</dd>`).join('')}</dl>`;
+    const json = `<pre>${esc(s.body == null ? '(no request body)' : s.body)}</pre>`;
+    const details = open
+      ? `${fields}<details><summary>Request JSON (what is sent, byte for byte)</summary>${json}</details>`
+      : `<details><summary>Details</summary>${fields}${json}</details>`;
+    const out = stepOutcome({ ...s, status });
+    return `<div class="cstep ${status}" data-step="${s.step_no}"><div class="line"><span class="st"><i class="${STEP_ICON[status] || STEP_ICON.pending}"></i></span><span class="m">${card.steps.length > 1 ? `${s.step_no}. ` : ''}${esc(s.method)} ${esc(s.path)}</span></div><div class="why">${esc(s.purpose)}</div>${details}${out ? `<div class="outcome">${esc(out)}</div>` : ''}</div>`;
+  }).join('');
+  const badge = card.tier === 3 ? '<span class="badge su"><i class="fa-solid fa-user-shield"></i> Superuser action</span>' : card.tier === 2 ? '<span class="badge">Sensitive</span>' : '<span class="badge">Write</span>';
+  const warn = card.tier >= 2 ? `<div class="warn"><i class="fa-solid fa-triangle-exclamation"></i> ${card.tier === 3 ? 'A superuser route: your password may be asked for. ' : ''}Check the exact content below before approving — the summary is Casey's wording; the content is what is sent.</div>` : '';
+  const state = cardStateLine(card);
+  el.innerHTML = `<div class="head"><span class="summary">${esc(card.summary)}</span>${badge}</div>${warn}<div class="steps">${steps}</div><div class="actions"></div>${state ? `<div class="state${/unknown|failed|Stopped/.test(state) ? ' err' : ''}">${esc(state)}</div>` : ''}`;
+  for (const t of el.__notes || []) el.insertAdjacentHTML('beforeend', `<div class="state err">${esc(t)}</div>`);   // what this run said about a step survives the re-renders
+  const actions = el.querySelector('.actions');
+  const btn = (label, cls, fn, title) => { const b = document.createElement('button'); b.type = 'button'; b.className = cls || ''; b.textContent = label; if (title) b.title = title; b.addEventListener('click', () => idle().then(fn)); actions.appendChild(b); return b; };
+  if (el.dataset.running) { actions.remove(); return; }
+  if (card.status === 'proposed') {
+    btn('Approve', 'primary', () => runCard(el, card), card.steps.length > 1 ? 'Run the steps, in order, as you' : 'Send this request as you');
+    btn('Decline', '', () => declineUi(el, card));
+  } else if (card.status === 'approved') {
+    const pendingLeft = card.steps.some((s) => s.status === 'pending') && !card.steps.some((s) => ['failed', 'claimed'].includes(s.status));
+    if (pendingLeft) btn('Continue', 'primary', () => runCard(el, card), 'Run the remaining steps');
+    btn(pendingLeft ? 'Stop here' : 'Tell Casey', pendingLeft ? '' : 'primary', () => resumeCard(el, card), 'Send what happened to Casey');
+  } else if (card.status === 'declined') {
+    btn('Tell Casey', 'primary', () => resumeCard(el, card), 'Send the decline to Casey');
+  } else actions.remove();
+  scrollDown();
+}
+/** Resolves once no turn is streaming (a card arrives a few ms before its turn's final line). */
+function idle() { return new Promise((r) => { const t = () => (running ? setTimeout(t, 50) : r()); t(); }); }
+function addCard(card, after) {
+  clearEmpty();
+  const el = document.createElement('div');
+  if (after && after.parentNode === log) after.insertAdjacentElement('afterend', el); else log.appendChild(el);
+  cardEls.set(Number(card.id), el);
+  renderCardInto(el, card);
+  return el;
+}
+async function refreshCard(el, id) {
+  try { const r = await P.apiSend(`/api/casey/cards/${id}`); renderCardInto(el, r.card); return r.card; }
+  catch (err) { el.className = 'card'; el.innerHTML = `<div class="state err">${esc(err && err.status === 404 ? 'This card is gone.' : (err && err.message) || 'Could not load the card')}</div>`; return null; }
+}
+function declineUi(el, card) {
+  const actions = el.querySelector('.actions'); actions.innerHTML = '';
+  const input = document.createElement('input'); input.type = 'text'; input.maxLength = 500; input.placeholder = 'Tell Casey why (optional)'; input.setAttribute('aria-label', 'Reason for declining');
+  const go = document.createElement('button'); go.type = 'button'; go.className = 'danger'; go.textContent = 'Decline';
+  const back = document.createElement('button'); back.type = 'button'; back.textContent = 'Cancel';
+  go.addEventListener('click', async () => {
+    go.disabled = true; back.disabled = true;
+    try { await P.apiSend(`/api/casey/cards/${card.id}/decline`, 'POST', input.value.trim() ? { note: input.value.trim() } : {}); }
+    catch (err) { if (!(err && err.status === 409)) { el.insertAdjacentHTML('beforeend', `<div class="state err">${esc((err && err.message) || 'Decline failed')}</div>`); go.disabled = false; back.disabled = false; return; } }
+    const fresh = await refreshCard(el, card.id);
+    if (fresh && fresh.status === 'declined') await resumeCard(el, fresh);
+  });
+  back.addEventListener('click', () => renderCardInto(el, card));
+  actions.appendChild(input); actions.appendChild(go); actions.appendChild(back); input.focus();
+}
+/**
+ * Approve: run the pending steps in order, each as claim → apiSend → settle, as
+ * the user, through the parent's apiSend (which raises the elevation prompt on a
+ * superuser route and attaches the JWT). The body goes as the STRING the server
+ * stored — byte for byte what the card shows — with Idempotency-Key
+ * casey:<card>:<step>. Stops at the first failure or anything but a clean claim;
+ * then the outcome goes to Casey (resume).
+ */
+async function runCard(el, card) {
+  if (running || el.dataset.running) return;
+  running = true; sendBtn.disabled = true;   // the composer, New, Delete and the picker wait while a card runs (a turn mid-run would resolve the card under it)
+  el.dataset.running = '1'; renderCardInto(el, card);
+  let stop = false, claimStopped = false;
+  const note = (t) => { (el.__notes = el.__notes || []).push(t); el.insertAdjacentHTML('beforeend', `<div class="state err">${esc(t)}</div>`); };
+  try {
+    for (const s of card.steps) {
+      if (stop || s.status !== 'pending') continue;
+      let claim;
+      try { claim = await P.apiSend(`/api/casey/cards/${card.id}/claim`, 'POST', { step: s.step_no }); }
+      catch (err) { note(`Could not claim step ${s.step_no}: ${(err && err.message) || 'request failed'}. Nothing was sent for it.`); stop = true; claimStopped = true; break; }
+      if (claim.outcome !== 'claimed') { stop = true; claimStopped = true; break; }   // applied elsewhere, unknown (another tab holds it), closed, out of order: show the card as it stands, resume nothing
+      const row = el.querySelector(`.cstep[data-step="${s.step_no}"]`); if (row) { row.className = 'cstep claimed'; row.querySelector('.st').innerHTML = `<i class="${STEP_ICON.claimed}"></i>`; }
+      const step = claim.step;
+      let settle = null;
+      try {
+        // responseType 'response' gives the route's real status (a 201 is a 201); apiSend hands back null for a 204 before that point.
+        const res = await P.apiSend(step.path, step.method, step.body == null ? null : step.body, { 'Idempotency-Key': step.idempotency_key }, { responseType: 'response' });
+        if (res === null) settle = { status: 'applied', http_status: 204, result: null };
+        else { let text = ''; try { text = await res.text(); } catch (_) {} let result = null; try { result = text ? JSON.parse(text) : null; } catch (_) { result = text; } settle = { status: 'applied', http_status: res.status, result }; }
+        // The sync bus (public/js/yc-sync.js): apiSend's 'response' path returns BEFORE the shell's own sniff, so a card's
+        // write would be silent to the case or contact page beside this pane — announce it here, as the shell would have.
+        try { if (P.YC && typeof P.YC._sniff === 'function') P.YC._sniff(step.method, step.path, settle.result); } catch (_) {}
+      } catch (err) {
+        // Only an answer FROM THE ROUTE is a failure: a 4xx, or a 500 it wrote itself. No status at all (the
+        // connection dropped, a timeout, a blocked redirect) or a 502/503/504 from the edge means the request
+        // may have landed — the step stays claimed and reads as UNKNOWN; nothing re-sends it (review B1).
+        const st = err && err.status;
+        if (Number.isInteger(st) && ((st >= 400 && st < 500) || st === 500)) settle = { status: 'failed', http_status: st, result: (err && err.body !== undefined) ? err.body : { message: (err && err.message) || 'request failed' } };
+        else note(`Step ${s.step_no}: no answer came back (${(err && err.message) || 'request failed'}). It may or may not have been applied — it is recorded as unknown; check the record before asking again.`);
+        stop = true;
+      }
+      if (!settle) continue;   // unknown: left claimed on purpose
+      const settleBody = { step: s.step_no, claim_token: claim.claim_token, ...settle };
+      let recorded = false;
+      for (let attempt = 0; attempt < 2 && !recorded; attempt++) {   // one retry: the write happened; its record should not hang on one dropped request
+        try { await P.apiSend(`/api/casey/cards/${card.id}/settle`, 'POST', settleBody); recorded = true; }
+        catch (err) { if (err && err.status === 404) recorded = true; else if (attempt === 1) { note(`Step ${s.step_no} was sent but its result could not be recorded: ${(err && err.message) || 'request failed'}. It will show as unknown.`); stop = true; } }   // a 404 on the retry: the first settle landed and its answer was lost — the card's re-read shows it
+      }
+    }
+  } finally {
+    delete el.dataset.running;
+    running = false; sendBtn.disabled = false;
+  }
+  const fresh = await refreshCard(el, card.id);
+  if (!claimStopped && fresh && fresh.status === 'approved') await resumeCard(el, fresh);
+}
+/** The outcome goes to Casey: POST /api/casey/turn/resume streams its reaction like any turn. */
+async function resumeCard(el, card) {
+  if (running) return;
+  await streamTurn({ chat_id: card.chat_id || chatId, card_id: card.id }, { resume: true, cardEl: el });
+}
+/** A plain message while a card is open: the server declines a proposed card implicitly (an approved one stands); the page shows it. */
+function closeOpenCards() {
+  const closed = [];
+  for (const el of cardEls.values()) {
+    if (el.dataset.status === 'proposed') { el.dataset.status = 'resumed'; const a = el.querySelector('.actions'); if (a) a.remove(); el.insertAdjacentHTML('beforeend', '<div class="state">Not acted on — you continued the conversation instead. Casey was told.</div>'); closed.push(el); }
+    else if (el.dataset.status === 'approved' || el.dataset.status === 'declined') { el.dataset.status = 'resumed'; const a = el.querySelector('.actions'); if (a) a.remove(); el.insertAdjacentHTML('beforeend', '<div class="state">Casey was told the result.</div>'); closed.push(el); }
+  }
+  return closed;
+}
+
 /**
  * A stored transcript (GET /api/casey/chats/:id) → the same look as a live turn.
  * Results are paired to their tool_use by id across the whole log (a map from
@@ -208,10 +398,13 @@ function keepGoingButton(d) {
  * that carries tool_result blocks is the loop's own message — its text blocks
  * (the budget note) are the loop's, shown as a trail note, never as the user's
  * words. The meta under an answer is the TURN's cost: the sum of the assistant
- * rows since the user's last question, the figure the live final shows.
+ * rows since the user's last question, the figure the live final shows. A
+ * results row whose meta names a card (S3b) gets the card, fetched live so its
+ * buttons reflect its current state; a turn opened by a card outcome shows the
+ * outcome block as a trail note (the user's own words, if any, as theirs).
  */
 function renderTranscript(messages) {
-  log.innerHTML = '';
+  log.innerHTML = ''; cardEls.clear();
   let trail = null; const stepTrail = new Map(); const pending = new Map(); let turnCost = 0; let calls = 0;
   for (const m of messages) {
     const blocks = Array.isArray(m.content) ? m.content : [];
@@ -220,6 +413,7 @@ function renderTranscript(messages) {
       // it — after any INTERRUPTED repair results it prepends); a row with results and no context block
       // is the loop's own results message, whose text (the budget note) is shown as a trail note.
       const isTurn = blocks.some((b) => b.type === 'text' && String(b.text).startsWith(CONTEXT_PREFIX)) || !blocks.some((b) => b.type === 'tool_result');
+      let outcomeShown = false;
       for (const b of blocks) {
         if (b.type === 'tool_result') {
           const t = stepTrail.get(b.tool_use_id) || trail || (trail = newTrail());
@@ -227,8 +421,14 @@ function renderTranscript(messages) {
           trailStep(t, { id: b.tool_use_id, name: p ? p.name : (env && env.tool) || '?', input: p ? p.input : {}, ok: env ? !!env.ok : !b.is_error, code: env && env.error && env.error.code, ms: env && env.ms, status: 'done' });
         } else if (b.type !== 'text' || String(b.text).startsWith(CONTEXT_PREFIX)) {
           // the context block is never shown
-        } else if (isTurn) { addUser(b.text); turnCost = 0; calls = 0; trail = null; }
-        else { const t = trail || (trail = newTrail()); const n = document.createElement('div'); n.className = 'note'; n.textContent = b.text; t.appendChild(n); }
+        } else if (isTurn && m.meta && m.meta.card_outcome && !outcomeShown) { outcomeShown = true; const t = trail || (trail = newTrail()); trailNote(t, String(b.text).split('\n')[0]); turnCost = 0; calls = 0; }   // the card's outcome opened this turn (the row's meta says so; the first non-context text block is the block)
+        else if (isTurn) { addUser(b.text); turnCost = 0; calls = 0; trail = null; }
+        else { const t = trail || (trail = newTrail()); trailNote(t, b.text); }
+      }
+      if (m.meta && m.meta.card_id) {
+        const el = addCard({ id: m.meta.card_id, tier: 1, summary: 'Loading the card…', status: 'resumed', steps: [] }, trail);
+        refreshCard(el, m.meta.card_id);
+        trail = null;
       }
     } else {
       const uses = blocks.filter((b) => b.type === 'tool_use');
@@ -302,7 +502,7 @@ function showModelControl() {
 async function openChat(id) {
   chatId = id;
   E('delChat').hidden = !id;
-  if (!id) { log.innerHTML = '<div id="empty">Ask about cases, contacts, tasks, mail — or how the app works.<span class="yc-hint">Casey looks things up as you, and shows every step.</span></div>'; setChip(boot ? boot.model : ''); E('title').textContent = 'Casey'; pick.value = ''; renderModelMenu(); showModelControl(); return; }
+  if (!id) { log.innerHTML = '<div id="empty">Ask about cases, contacts, tasks, mail — or how the app works.<span class="yc-hint">Casey looks things up as you, and shows every step.</span></div>'; cardEls.clear(); setChip(boot ? boot.model : ''); E('title').textContent = 'Casey'; pick.value = ''; renderModelMenu(); showModelControl(); return; }
   try {
     const r = await P.apiSend(`/api/casey/chats/${id}`);
     setChip(r.chat.model); E('title').textContent = r.chat.title; showModelControl();
@@ -310,33 +510,51 @@ async function openChat(id) {
     pick.value = String(id);
   } catch (err) {
     chatId = null; E('delChat').hidden = true; renderModelMenu(); setChip(boot ? boot.model : ''); showModelControl();   // back to a new chat: the firm's default again
-    log.innerHTML = ''; addAssistant(err && err.status === 404 ? 'That chat is gone.' : (err && err.message) || 'Could not open the chat', { error: true });
+    log.innerHTML = ''; cardEls.clear(); addAssistant(err && err.status === 404 ? 'That chat is gone.' : (err && err.message) || 'Could not open the chat', { error: true });
     loadChats().catch(() => {});
   }
 }
 
 // ── a turn ─────────────────────────────────────────────────────────────────
+/** The user's message → POST /api/casey/turn. */
 async function sendTurn(text) {
   const q = String(text || '').trim();
   if (!q || running) return;
-  running = true; stopPending = false; turnClaimed = false; sendBtn.disabled = true; stopBtn.hidden = false; textEl.value = '';
+  textEl.value = '';
   addUser(q);
+  await streamTurn({ ...(chatId ? { chat_id: chatId } : {}), text: q, ...(!chatId && !modelPick.hidden && modelPick.value ? { model: modelPick.value } : {}) });
+}
+/**
+ * One streamed turn: POST /api/casey/turn (or /turn/resume with {resume:true} —
+ * the body carries chat_id + card_id and the server's user message is the card's
+ * outcome), rendered line by line. `context` is added here.
+ */
+async function streamTurn(body, { resume = false, cardEl = null } = {}) {
+  if (running) return;
+  running = true; stopPending = false; turnClaimed = false; sendBtn.disabled = true; stopBtn.hidden = false;
+  if (cardEl) { const a = cardEl.querySelector('.actions'); if (a) a.remove(); }
   const trail = newTrail();
-  let answer = null, answerText = '';
+  let answer = null, answerText = '', sawFinal = false;
+  const closedHere = [];   // the cards this plain turn painted as resolved (N-d: a rollback re-opens them server-side)
   const ctx = contextOn ? captureContext() : null;
+  const isNew = !chatId;
   try {
-    const res = await P.apiSend('/api/casey/turn', 'POST', { ...(chatId ? { chat_id: chatId } : {}), text: q, ...(ctx ? { context: ctx } : {}), ...(!chatId && !modelPick.hidden && modelPick.value ? { model: modelPick.value } : {}) }, {}, { responseType: 'response' });
+    const res = await P.apiSend(resume ? '/api/casey/turn/resume' : '/api/casey/turn', 'POST', { ...body, ...(ctx ? { context: ctx } : {}) }, {}, { responseType: 'response' });
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     const onLine = (ev) => {
-      if (ev.type === 'chat') { if (!chatId) { chatId = ev.id; E('delChat').hidden = false; E('title').textContent = ev.title; } setChip(ev.model); showModelControl(); turnClaimed = true; if (stopPending) { stopPending = false; stopTurn(); } }
+      if (ev.type === 'chat') { if (!chatId) { chatId = ev.id; E('delChat').hidden = false; E('title').textContent = ev.title; } setChip(ev.model); showModelControl(); turnClaimed = true; if (!resume) closedHere.push(...closeOpenCards()); if (stopPending) { stopPending = false; stopTurn(); } }   // the server resolved any open card before this line (a proposed one is declined implicitly): paint it now, not before the turn was accepted
       else if (ev.type === 'tool_call') trailStep(trail, { id: ev.id, name: ev.name, input: ev.input, status: 'run' });
       else if (ev.type === 'tool_result') trailStep(trail, { id: ev.id, name: ev.name, input: undefined, ok: ev.ok, code: ev.code, ms: ev.ms, status: 'done' });
       else if (ev.type === 'thinking') { if (ev.text) trailThink(trail, ev.text); }
       else if (ev.type === 'delta') { if (!answer) answer = addAssistant('', { streaming: true }); answerText += ev.text; answer.textContent = answerText; scrollDown(); }
       else if (ev.type === 'reset') { answerText = ''; if (answer) answer.textContent = ''; }
       else if (ev.type === 'heartbeat') { /* keeps the socket warm */ }
+      else if (ev.type === 'card') addCard(ev.card, trail);   // the turn ends on it; its buttons wait for the stream to close (idle)
       else if (ev.type === 'final') {
-        const b = ev.body; if (!answer) answer = addAssistant('', { streaming: true });
+        sawFinal = true;
+        const b = ev.body;
+        if (b.card_id && !b.text) { if (answer) finishAssistant(answer, answerText, ''); return; }   // the card is the answer: no new bubble; a preamble the model streamed is rendered as it stands
+        if (!answer) answer = addAssistant('', { streaming: true });
         const bits = [`${b.calls} tool call${b.calls === 1 ? '' : 's'}`, fmtMs(b.ms), fmtCents(b.cost_cents)];
         if (b.stopped) bits.push('stopped'); if (b.limited) bits.push('tool budget reached');
         finishAssistant(answer, b.text, bits.filter(Boolean).join(' · '));
@@ -349,13 +567,15 @@ async function sendTurn(text) {
       buf += dec.decode(value, { stream: true });
       let nl; while ((nl = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); if (line.trim()) { try { onLine(JSON.parse(line)); } catch (_) { /* a cut line */ } } }
     }
-    if (!answer) addAssistant('Casey returned nothing.', { error: true });
+    if (!answer && !log.querySelector('.card[data-status="proposed"]')) addAssistant('Casey returned nothing.', { error: true });
   } catch (err) {
     // A pick the server no longer allows (the firm's menu changed since this pane booted): say so and re-read the menu.
-    const menuChanged = !turnClaimed && !chatId && err && err.status === 400 && err.message === MENU_REFUSAL;   // the loop's exact words (services/casey/loop.js), pinned in tests/caseyLoop.test.js
+    const menuChanged = !turnClaimed && isNew && err && err.status === 400 && err.message === MENU_REFUSAL;   // the loop's exact words (services/casey/loop.js), pinned in tests/caseyLoop.test.js
     addAssistant(menuChanged ? 'The model menu changed since this pane opened — pick again.' : (err && err.message ? err.message : 'The request failed'), { error: true });
     if (menuChanged) { try { boot = await P.apiSend('/api/casey/boot'); } catch (_) { /* keep the old menu */ } renderModelMenu(); setChip(boot ? boot.model : ''); showModelControl(); }
   } finally {
+    if (cardEl && cardEl.dataset.cardId) refreshCard(cardEl, cardEl.dataset.cardId);   // resumed (no buttons) after a good run; its buttons back after a failed one, so the resume can be retried
+    else if (!resume && closedHere.length && !sawFinal) for (const el of closedHere) refreshCard(el, el.dataset.cardId);   // a plain turn accepted, then rolled back before its final: the server re-opened the card — show it as it is
     stopPending = false; stopBtn.hidden = true;
     const think = trail.querySelector('.think:last-child'); if (think) think.dataset.closed = '1';
     if (!trail.children.length) trail.remove();

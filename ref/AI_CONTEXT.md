@@ -27,6 +27,27 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S3b — api_write, cards, the ledger (11-23):** the seventh tool
+  PROPOSES 1–5 non-GET calls as a card (`services/casey/tools/api_write.js`:
+  catalog + `proposable` + the user's own permission judged, `$N` refs refused
+  until S3c; a non-SU never gets a T3 card); the loop ends the turn on a
+  `card` line; the PAGE runs the steps as the user through `apiSend` (claim →
+  send the stored body STRING with `Idempotency-Key casey:<card>:<step>` →
+  settle; stop at the first failure), then `POST /api/casey/turn/resume`
+  feeds the outcome — `cards.outcomeText`, from the ledger rows ONLY — as the
+  first text block of the next user message (not a tool_result: a divergence
+  from §4.6 recorded in design §9 S3b). Tables `casey_cards` /
+  `casey_card_steps` (migration `2026-11-23_casey_v2_s3b_cards.sql`, script
+  `scripts/caseyV2S3bMigrate.js`); `services/casey/cards.js` (claim order in
+  SQL, claim tokens, a claimed-unsettled step is UNKNOWN and never re-sent —
+  the page settles `failed` only for a route's own 4xx / 500; no status or a
+  502 / 503 / 504 leaves the step claimed, review B1);
+  `lib/caseyCardContent.js` renders the T2 content server-side (no field
+  hidden); prompt v2.2. Routes: `GET /api/casey/cards/:id`, `POST …/claim`,
+  `…/settle`, `…/decline`, `POST /api/casey/turn/resume` (staff, flag, no
+  View-as). A plain turn while a card is open declines it implicitly and
+  reports that first. Design §9 S3b.
+
 - **Casey v2 S3a-2 — the model picker (11-22):** the pane offers a model
   dropdown while a NEW chat is being started; the firm's menu is the csv
   setting `casey_v2_models` (blank = all three), `casey_v2_model` the one

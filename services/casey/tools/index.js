@@ -2,9 +2,11 @@
 //
 // Design: ref/CASEY_V2_DESIGN.md §4.1–4.2, §8.4–8.5; as built: §9.
 //
-// Six plain functions `run(ctx, input) → data`, each described once with a
+// Seven plain functions `run(ctx, input) → data`, each described once with a
 // JSON-schema `input_schema`, so the in-app loop (S2) and the MCP server (S5)
-// expose the same tools unchanged. Nothing here calls a model.
+// expose the same tools unchanged. Nothing here calls a model. S3b adds
+// api_write, which stores a CARD instead of acting (services/casey/cards.js);
+// the loop hands it ctx.card = { chatId, toolUseId }.
 //
 //   ctx = { db, auth, app, headers, ip, port, via, now?, sourceRoot?, fetch? }
 //     db       the main pool (report_runs logging only — sql_read reads on the
@@ -23,9 +25,10 @@
 //   { ok: true,  tool, data, bytes, truncated, untrusted, ms }
 //   { ok: false, tool, error: { code, message, ...detail }, ms }
 // Input is checked against the schema first (type, required, unknown keys,
-// enum, string / integer bounds — a small checker, not a JSON-schema engine:
-// the schemas here use only what it supports and tests/caseyTools.test.js
-// pins that). A result larger than RESULT_CAP bytes (serialised) is handed
+// enum, string / integer bounds, arrays with `items` and bounds, nested
+// objects with `properties` — a small checker, not a JSON-schema engine: the
+// schemas here use only what it supports and tests/caseyTools.test.js pins
+// that). A result larger than RESULT_CAP bytes (serialised) is handed
 // back as a TRUNCATED STRING with a marker, never a silently shortened
 // array — the model sees that it is partial. `untrusted: true` on every
 // result that carries record, file or doc content: a prompt-injection flag
@@ -47,6 +50,7 @@ const TOOLS = Object.freeze([
   require('./lookup_routes'),
   require('./read_source'),
   require('./search_docs'),
+  require('./api_write'),
 ]);
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
@@ -81,6 +85,20 @@ function checkValue(schema, v, at) {
     for (const [k, inner] of Object.entries(v)) {
       const e = checkValue(schema.additionalProperties, inner, `${at}.${k}`);
       if (e) return e;
+    }
+  }
+  if (want === 'object' && schema.properties) {
+    const e = checkInput(schema, v);            // a nested object: its own keys, required and types
+    if (e) return `${at}: ${e}`;
+  }
+  if (want === 'array') {
+    if (schema.minItems != null && v.length < schema.minItems) return `${at} needs at least ${schema.minItems} item${schema.minItems === 1 ? '' : 's'}`;
+    if (schema.maxItems != null && v.length > schema.maxItems) return `${at} has more than ${schema.maxItems} items`;
+    if (schema.items) {
+      for (let i = 0; i < v.length; i++) {
+        const e = checkValue(schema.items, v[i], `${at}[${i}]`);
+        if (e) return e;
+      }
     }
   }
   return null;

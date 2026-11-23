@@ -32,17 +32,50 @@ function ndjson(events) {
   return { ok: true, status: 200, body: new ReadableStream({ pull(c) { if (i >= lines.length) { c.close(); return; } c.enqueue(enc.encode(lines[i++])); } }) };
 }
 
-/** A pane with a fake parent: apiSend dispatches on method + path; `calls` records them. */
+/** A pane with a fake parent: apiSend dispatches on method + path; `calls` records them (headers too — the Idempotency-Key, S3b).
+ *  S3b: `cardsApi` is a map card id → card state the fake serves on GET /api/casey/cards/:id; claim / settle / decline mutate it like
+ *  the store would (in order, a token per claim); `resume` scripts POST /api/casey/turn/resume; `routes` answers a card step's own
+ *  request (path → value, or a function; a thrown {status, body} is the route's error). */
 const MENU = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', hint: 'deeper', default: false }, { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'fast', default: true }, { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'dearest', default: false }];
-async function pane({ boot = { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'Keep going from where you stopped.', models: MENU }, chats = [], transcripts = {}, turn = null, context = null } = {}) {
+async function pane({ boot = { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'Keep going from where you stopped.', models: MENU }, chats = [], transcripts = {}, turn = null, context = null, cardsApi = {}, resume = null, routes = {}, claimOverride = {} } = {}) {
   const dom = new JSDOM(HTML.replace('<script src="/themeSync.js"></script>', ''), { runScripts: 'outside-only', url: 'https://app.test/casey.html', pretendToBeVisual: true });
   const w = dom.window;
   const calls = [];
   w.TextDecoder = TextDecoder; w.TextEncoder = TextEncoder; w.ReadableStream = ReadableStream;
   w.__parent = {
     apiSend: async (p, method = 'GET', body, headers, opts) => {
-      calls.push({ p, method, body, opts });
+      calls.push({ p, method, body, headers, opts });
       if (p === '/api/casey/boot') return boot;
+      let m;
+      if ((m = /^\/api\/casey\/cards\/(\d+)$/.exec(p)) && method === 'GET') { const c = cardsApi[m[1]]; if (!c) { const e = new Error('No such card'); e.status = 404; throw e; } return { status: 'success', card: JSON.parse(JSON.stringify(c)) }; }
+      if ((m = /^\/api\/casey\/cards\/(\d+)\/claim$/.exec(p))) {
+        const c = cardsApi[m[1]]; const s = c.steps.find((x) => x.step_no === body.step);
+        if (claimOverride[body.step]) return { status: 'success', outcome: claimOverride[body.step], step: s };   // another tab got there first
+        if (!['proposed', 'approved'].includes(c.status)) return { status: 'success', outcome: 'closed', step: s };
+        if (s.status === 'applied') return { status: 'success', outcome: 'applied', step: s };
+        if (s.status === 'claimed') return { status: 'success', outcome: 'unknown', step: s };
+        if (c.steps.some((x) => x.step_no < s.step_no && x.status !== 'applied')) return { status: 'success', outcome: 'out_of_order', step: s };
+        s.status = 'claimed'; s.__token = 'tok-' + s.step_no; c.status = 'approved';
+        return { status: 'success', outcome: 'claimed', claim_token: s.__token, step: { ...s, __token: undefined } };
+      }
+      if ((m = /^\/api\/casey\/cards\/(\d+)\/settle$/.exec(p))) {
+        const c = cardsApi[m[1]]; const s = c.steps.find((x) => x.step_no === body.step);
+        if (!s || s.status !== 'claimed' || s.__token !== body.claim_token) { const e = new Error('No claimed step matches that token'); e.status = 404; throw e; }
+        s.status = body.status; s.http_status = body.http_status; s.result = body.result; return { status: 'success', settled: true };
+      }
+      if ((m = /^\/api\/casey\/cards\/(\d+)\/decline$/.exec(p))) {
+        const c = cardsApi[m[1]]; if (c.status !== 'proposed') { const e = new Error('only a proposed card can be declined'); e.status = 409; throw e; }
+        c.status = 'declined'; c.decline_note = body && body.note || null; for (const s of c.steps) if (s.status === 'pending') s.status = 'declined'; return { status: 'success', declined: true };
+      }
+      if (p === '/api/casey/turn/resume') { if (!resume) throw new Error('no resume scripted'); const c = cardsApi[body.card_id]; if (c) { c.status = 'resumed'; for (const s of c.steps) if (s.status === 'pending') s.status = 'skipped'; } return typeof resume === 'function' ? resume(body) : ndjson(resume); }
+      if (Object.prototype.hasOwnProperty.call(routes, p)) {   // a card step's own route: the page asks for the raw Response ({status, text()}); a 204 is apiSend's null; {__throw} is the route's error (no status = a network failure)
+        const r = routes[p]; const v = typeof r === 'function' ? await r(method, body, headers) : r;
+        if (v && v.__throw) { const e = new Error(v.__throw.message || 'route error'); if (v.__throw.status !== undefined) e.status = v.__throw.status; if (v.__throw.body !== undefined) e.body = v.__throw.body; throw e; }
+        if (v === null) return null;
+        expect(opts).toEqual({ responseType: 'response' });
+        const status = v && v.__status || 200; const payload = v && v.__status ? v.body : v;
+        return { ok: true, status, text: async () => (payload === undefined ? '' : JSON.stringify(payload)) };
+      }
       if (p === '/api/casey/chats' && method === 'GET') return { status: 'success', chats };
       if (/^\/api\/casey\/chats\/\d+$/.test(p) && method === 'GET') { const id = Number(p.split('/').pop()); return transcripts[id] || { status: 'success', chat: { id, title: 't', model: 'm' }, messages: [] }; }
       if (/^\/api\/casey\/chats\/\d+$/.test(p) && method === 'DELETE') return { status: 'success', deleted: true };
@@ -415,4 +448,312 @@ test('renderMd: escaping first, then headings, bold, code, fences, lists, tables
   expect(md('| a | b |\n|---|---|\n| 1 | **2** |')).toBe('<div class="tbl"><table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td><strong>2</strong></td></tr></tbody></table></div>');
   expect(md('line one\nline two\n\npara')).toBe('<p>line one<br>line two</p><p>para</p>');
   expect(md('')).toBe('');
+});
+
+// ── S3b: cards ─────────────────────────────────────────────────────────────
+const STEP = (o) => ({ step_no: 1, method: 'POST', path: '/api/tasks', body: '{"title":"Call","n":1}', tier: 1, purpose: 'create the task', status: 'pending', http_status: null, result: null, idempotency_key: 'casey:5:1', content: { kind: 'fields', fields: [{ label: 'title', value: 'Call' }, { label: 'n', value: '1' }] }, ...o });
+const CARD = (o) => ({ id: 5, chat_id: 8, user_id: 6, tool_use_id: 'tu', tier: 1, summary: 'Create a task for the trustee call', status: 'proposed', decline_note: null, steps: [STEP()], ...o });
+const cardTurn = (card) => (body) => ndjson([{ type: 'chat', id: body.chat_id || 8, title: 'q', model: 'claude-sonnet-5-5', created: !body.chat_id }, { type: 'tool_call', id: 'tu', name: 'api_write', input: { summary: card.summary } }, { type: 'tool_result', id: 'tu', name: 'api_write', ok: true, code: null, ms: 3 }, { type: 'card', card }, { type: 'final', body: { chat_id: body.chat_id || 8, text: '', calls: 1, cost_cents: 0.2, ms: 900, limited: false, stopped: false, card_id: card.id } }]);
+const answer = (text) => (body) => ndjson([{ type: 'chat', id: body.chat_id, title: 'q', model: 'claude-sonnet-5-5', created: false }, { type: 'delta', text }, { type: 'final', body: { chat_id: body.chat_id, text, calls: 0, cost_cents: 0.1, ms: 500, limited: false, stopped: false, card_id: null } }]);
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('S3b a card arrives: T1 renders collapsed (summary, badge, step line, purpose, Details with the content and the exact JSON), no empty answer bubble, Approve / Decline live once the stream closes; T2 shows the content open with a warning; T3 is labelled Superuser action', async () => {
+  const card = CARD();
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(card), cardsApi: { 5: card } });
+  p.E('text').value = 'Create the task'; p.E('send').click(); await wait(250);
+  const el = p.d.querySelector('.card');
+  expect(el.className).toBe('card t1'); expect(el.dataset.cardId).toBe('5'); expect(el.dataset.status).toBe('proposed');
+  expect(el.querySelector('.summary').textContent).toBe('Create a task for the trustee call');
+  expect(el.querySelector('.badge').textContent).toBe('Write');
+  expect(el.querySelector('.warn')).toBeNull();
+  expect(el.querySelector('.cstep .m').textContent).toBe('POST /api/tasks');     // one step: no number
+  expect(el.querySelector('.cstep .why').textContent).toBe('create the task');
+  const det = el.querySelector('details'); expect(det.open).toBe(false); expect(det.querySelector('summary').textContent).toBe('Details');
+  expect([...det.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['title', 'n']);
+  expect(det.querySelector('pre').textContent).toBe('{"title":"Call","n":1}');  // the stored text, as it will be sent
+  expect(p.d.querySelectorAll('.msg.assistant').length).toBe(0);                 // the card is the answer
+  expect([...el.querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Approve', 'Decline']);
+  expect(p.E('send').disabled).toBe(false);
+  // T2: content open, the warning; T3: the superuser label and the password note.
+  const t2 = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(CARD({ id: 6, tier: 2, steps: [STEP({ path: '/api/mail/send', body: '{"to":["a@x.test"],"subject":"Hi"}', tier: 2, content: { kind: 'mail', fields: [{ label: 'To', value: 'a@x.test' }, { label: 'Subject', value: 'Hi' }] } })] })) });
+  t2.E('text').value = 'send'; t2.E('send').click(); await wait(250);
+  const e2 = t2.d.querySelector('.card');
+  expect(e2.className).toBe('card t2'); expect(e2.querySelector('.badge').textContent).toBe('Sensitive');
+  expect(e2.querySelector('.warn').textContent).toMatch(/Check the exact content below before approving/);
+  expect(e2.querySelector('.warn').textContent).not.toMatch(/password/);
+  expect(e2.querySelector('.cstep > dl.fields')).not.toBeNull();                 // open, not inside details
+  expect([...e2.querySelectorAll('.cstep > dl.fields dd')].map((d) => d.textContent)).toEqual(['a@x.test', 'Hi']);
+  expect(e2.querySelector('details summary').textContent).toMatch(/Request JSON/);
+  const t3 = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(CARD({ id: 7, tier: 3, steps: [STEP({ path: '/admin/system-alerts/ack', tier: 3 }), STEP({ step_no: 2, path: '/admin/system-alerts/resolve', tier: 3, idempotency_key: 'casey:7:2' })] })) });
+  t3.E('text').value = 'ack'; t3.E('send').click(); await wait(250);
+  const e3 = t3.d.querySelector('.card');
+  expect(e3.className).toBe('card t3'); expect(e3.querySelector('.badge.su').textContent).toMatch(/Superuser action/);
+  expect(e3.querySelector('.warn').textContent).toMatch(/A superuser route: your password may be asked for/);
+  expect([...e3.querySelectorAll('.cstep .m')].map((m) => m.textContent)).toEqual(['1. POST /admin/system-alerts/ack', '2. POST /admin/system-alerts/resolve']);
+  expect(e3.querySelector('.actions button').title).toBe('Run the steps, in order, as you');
+});
+
+test('S3b Approve: claim → the route called through apiSend with the stored body STRING and the Idempotency-Key → settle applied → resume streams the answer; the card then shows done; a second card step after a failure is not run', async () => {
+  const card = CARD({ steps: [STEP(), STEP({ step_no: 2, path: '/api/events', body: '{"when":"x"}', idempotency_key: 'casey:5:2' })] });
+  const routeCalls = [];
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(card), cardsApi: { 5: card }, resume: answer('Task 77 is created.'),
+    routes: { '/api/tasks': (method, body, headers) => { routeCalls.push({ method, body, headers }); return { __status: 201, body: { status: 'success', task: { id: 77 } } }; }, '/api/events': (method, body, headers) => { routeCalls.push({ method, body, headers }); return { __throw: { status: 409, message: 'Overlaps', body: { status: 'error', message: 'Overlaps' } } }; } } });
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  const el = p.d.querySelector('.card');
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click();
+  await wait(400);
+  // The route saw the exact string body and the key, as the user (apiSend is the parent's).
+  expect(routeCalls).toEqual([
+    { method: 'POST', body: '{"title":"Call","n":1}', headers: { 'Idempotency-Key': 'casey:5:1' } },
+    { method: 'POST', body: '{"when":"x"}', headers: { 'Idempotency-Key': 'casey:5:2' } },
+  ]);
+  const seq = p.calls.filter((c) => /cards\/5|turn\/resume|\/api\/tasks|\/api\/events/.test(c.p)).map((c) => `${c.method} ${c.p}${c.body && c.body.step ? ' s' + c.body.step : ''}${c.body && c.body.status ? ' ' + c.body.status : ''}`);
+  expect(seq).toEqual(['POST /api/casey/cards/5/claim s1', 'POST /api/tasks', 'POST /api/casey/cards/5/settle s1 applied', 'POST /api/casey/cards/5/claim s2', 'POST /api/events', 'POST /api/casey/cards/5/settle s2 failed', 'GET /api/casey/cards/5', 'POST /api/casey/turn/resume', 'GET /api/casey/cards/5']);   // re-read after the run (buttons by state) and after the resume (resumed: no buttons)
+  const settle1 = p.calls.find((c) => /settle/.test(c.p) && c.body.step === 1).body;
+  expect(settle1).toEqual({ step: 1, claim_token: 'tok-1', status: 'applied', http_status: 201, result: { status: 'success', task: { id: 77 } } });   // the route's REAL status (N1)
+  const settle2 = p.calls.find((c) => /settle/.test(c.p) && c.body.step === 2).body;
+  expect(settle2).toEqual({ step: 2, claim_token: 'tok-2', status: 'failed', http_status: 409, result: { status: 'error', message: 'Overlaps' } });
+  const resume = p.calls.find((c) => c.p === '/api/casey/turn/resume').body;
+  expect(resume).toEqual({ chat_id: 8, card_id: 5 });
+  // Rendered: step 1 applied, step 2 failed with the route's message, the card resumed, the answer streamed, no buttons.
+  const steps = [...el.querySelectorAll('.cstep')];
+  expect(steps.map((s) => s.className)).toEqual(['cstep applied', 'cstep failed']);
+  expect(steps[0].querySelector('.outcome').textContent).toBe('applied (HTTP 201)');
+  expect(steps[1].querySelector('.outcome').textContent).toBe('failed (HTTP 409) — Overlaps');
+  expect(el.dataset.status).toBe('resumed'); expect(el.querySelector('.actions')).toBeNull();
+  expect(el.querySelector('.state').textContent).toBe('Done — Casey was told the result.');
+  expect(p.d.querySelector('.msg.assistant.md').textContent).toMatch(/^Task 77 is created\./);
+});
+
+test('S3b Decline: the note field appears, the decline posts the trimmed note, then the resume; Cancel restores the buttons; an unknown claim (a step already claimed elsewhere) stops the run and shows as unknown', async () => {
+  const card = CARD();
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(card), cardsApi: { 5: card }, resume: answer('Ok, I will not.') });
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  const el = p.d.querySelector('.card');
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Decline').click(); await wait(80);
+  expect([...el.querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Decline', 'Cancel']);
+  const input = el.querySelector('.actions input'); expect(input.placeholder).toBe('Tell Casey why (optional)');
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Cancel').click(); await wait(80);
+  expect([...el.querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Approve', 'Decline']);
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Decline').click(); await wait(80);
+  el.querySelector('.actions input').value = '  wrong client ';
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Decline').click(); await wait(300);
+  expect(p.calls.find((c) => /decline/.test(c.p)).body).toEqual({ note: 'wrong client' });
+  expect(p.calls.find((c) => c.p === '/api/casey/turn/resume').body).toEqual({ chat_id: 8, card_id: 5 });
+  expect(el.dataset.status).toBe('resumed');
+  expect(el.querySelector('.state').textContent).toBe('Declined — wrong client. Casey was told.');
+  expect(p.d.querySelector('.msg.assistant.md').textContent).toMatch(/^Ok, I will not\./);
+  // Unknown: the step was claimed by another tab (the fake answers 'unknown'); nothing is sent; the card says so.
+  const stale = CARD({ id: 9, steps: [STEP({ status: 'claimed', idempotency_key: 'casey:9:1' })], status: 'approved' });
+  const p2 = await pane({ chats: [{ id: 8, title: 'q' }], transcripts: { 8: { status: 'success', chat: { id: 8, title: 'q', model: 'm' }, messages: [
+    { seq: 1, role: 'user', content: [T('[context — refreshed each turn]\nx'), T('go')] },
+    { seq: 2, role: 'assistant', content: [{ type: 'tool_use', id: 'tu', name: 'api_write', input: {} }] },
+    { seq: 3, role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu', content: JSON.stringify({ ok: true, tool: 'api_write', ms: 2 }) }], meta: { card_id: 9 } },
+  ] } }, cardsApi: { 9: stale }, routes: { '/api/tasks': () => { throw new Error('must not be sent'); } } });
+  p2.E('chatPick').value = '8'; p2.E('chatPick').dispatchEvent(new p2.w.Event('change')); await wait(200);
+  const e9 = p2.d.querySelector('.card');
+  expect(e9.dataset.status).toBe('approved');
+  expect(e9.querySelector('.cstep').className).toBe('cstep unknown');
+  expect(e9.querySelector('.outcome').textContent).toMatch(/^unknown — the request was sent but no answer was recorded/);
+  expect([...e9.querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Tell Casey']);   // nothing to continue: only the report
+  expect(e9.querySelector('.state').textContent).toBe('A step is in an unknown state.');
+});
+
+test('S3b a stored transcript: the results row\'s card_id fetches the card live (proposed → buttons; approved with pending steps → Continue / Stop here); the outcome block of a resume turn is a trail note, not the user\'s bubble; a plain Send while a card is proposed marks it declined', async () => {
+  const proposed = CARD({ id: 11, steps: [STEP({ idempotency_key: 'casey:11:1' })] });
+  const partial = CARD({ id: 12, status: 'approved', steps: [STEP({ status: 'applied', http_status: 200, result: { ok: true }, idempotency_key: 'casey:12:1' }), STEP({ step_no: 2, path: '/api/events', idempotency_key: 'casey:12:2' })] });
+  const messages = [
+    { seq: 1, role: 'user', content: [T('[context — refreshed each turn]\nx'), T('Create it')] },
+    { seq: 2, role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'api_write', input: { summary: 's' } }] },
+    { seq: 3, role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: JSON.stringify({ ok: true, tool: 'api_write', ms: 2 }) }], meta: { card_id: 12 } },
+    { seq: 4, role: 'user', content: [T('[context — refreshed each turn]\nx'), T('[Card 12 — approved by the user; 1 of 2 steps applied.]\nStep 1: POST /api/tasks — applied (HTTP 200)'), T('and then?')], meta: { card_outcome: { card_id: 12, status: 'resumed', steps: ['applied', 'skipped'] } } },
+    { seq: 5, role: 'assistant', content: [T('Step one is done.')], meta: { cost_cents: 0.3 } },
+    { seq: 6, role: 'user', content: [T('[context — refreshed each turn]\nx'), T('try the other one')] },
+    { seq: 7, role: 'assistant', content: [{ type: 'tool_use', id: 'b', name: 'api_write', input: { summary: 's2' } }] },
+    { seq: 8, role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b', content: JSON.stringify({ ok: true, tool: 'api_write', ms: 2 }) }], meta: { card_id: 11 } },
+  ];
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], transcripts: { 8: { status: 'success', chat: { id: 8, title: 'q', model: 'm' }, messages } }, cardsApi: { 11: proposed, 12: partial }, turn: answer('Noted.'), resume: answer('r') });
+  p.E('chatPick').value = '8'; p.E('chatPick').dispatchEvent(new p.w.Event('change')); await wait(250);
+  expect(p.calls.filter((c) => /^\/api\/casey\/cards\/\d+$/.test(c.p)).map((c) => c.p).sort()).toEqual(['/api/casey/cards/11', '/api/casey/cards/12']);
+  const els = [...p.d.querySelectorAll('.card')];
+  expect(els.map((e) => e.dataset.cardId)).toEqual(['12', '11']);               // in transcript order, each after its round's trail
+  expect([...els[0].querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Continue', 'Stop here']);
+  expect(els[0].querySelector('.state').textContent).toBe('Partly run.');
+  expect([...els[1].querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Approve', 'Decline']);
+  expect([...p.d.querySelectorAll('.msg.user')].map((n) => n.textContent)).toEqual(['Create it', 'and then?', 'try the other one']);   // the outcome block is not a user bubble
+  expect([...p.d.querySelectorAll('.trail .note')].map((n) => n.textContent)).toEqual(['[Card 12 — approved by the user; 1 of 2 steps applied.]']);   // its first line, as a note
+  // The order in the log: user, trail(+card 12), note-trail, answer, user, trail(+card 11).
+  expect([...p.E('log').children].map((n) => n.className.split(' ')[0])).toEqual(['msg', 'trail', 'card', 'trail', 'msg', 'msg', 'msg', 'trail', 'card']);   // question, round + card 12, the outcome note, "and then?", the answer, the next question, round + card 11
+  // A plain Send while card 11 is proposed: the page marks it declined (the server resolves it the same way).
+  p.E('text').value = 'never mind'; p.E('send').click(); await wait(250);
+  expect(els[1].dataset.status).toBe('resumed'); expect(els[1].querySelector('.actions')).toBeNull();
+  expect(els[1].querySelector('.state').textContent).toBe('Not acted on — you continued the conversation instead. Casey was told.');
+  expect(els[0].dataset.status).toBe('resumed');   // the approved one too: reported as it stands
+  expect(p.calls.find((c) => c.p === '/api/casey/turn').body).toEqual({ chat_id: 8, text: 'never mind' });
+});
+
+test('S3b Continue runs only the pending steps of an approved card, then resumes; Stop here resumes at once (pending → skipped server-side); a failing resume leaves the buttons for a retry', async () => {
+  const partial = CARD({ id: 12, status: 'approved', steps: [STEP({ status: 'applied', http_status: 200, result: 1, idempotency_key: 'casey:12:1' }), STEP({ step_no: 2, path: '/api/events', body: '{"e":1}', idempotency_key: 'casey:12:2' })] });
+  const routeCalls = [];
+  const transcript = { status: 'success', chat: { id: 8, title: 'q', model: 'm' }, messages: [
+    { seq: 1, role: 'user', content: [T('[context — refreshed each turn]\nx'), T('go')] },
+    { seq: 2, role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'api_write', input: {} }] },
+    { seq: 3, role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: '{"ok":true}' }], meta: { card_id: 12 } },
+  ] };
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], transcripts: { 8: transcript }, cardsApi: { 12: partial }, resume: answer('Both done.'), routes: { '/api/events': (m, body, h) => { routeCalls.push({ body, h }); return { id: 2 }; } } });
+  p.E('chatPick').value = '8'; p.E('chatPick').dispatchEvent(new p.w.Event('change')); await wait(200);
+  let el = p.d.querySelector('.card');
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Continue').click(); await wait(400);
+  expect(routeCalls).toEqual([{ body: '{"e":1}', h: { 'Idempotency-Key': 'casey:12:2' } }]);   // step 1 was not re-sent
+  expect(p.calls.filter((c) => /claim/.test(c.p)).map((c) => c.body.step)).toEqual([2]);
+  expect(el.dataset.status).toBe('resumed');
+  expect(p.d.querySelector('.msg.assistant.md').textContent).toMatch(/^Both done\./);
+  // Stop here: resume at once; the fake marks pending → skipped; a failing resume keeps the card actionable.
+  const again = CARD({ id: 13, status: 'approved', steps: [STEP({ status: 'applied', http_status: 200, result: 1, idempotency_key: 'casey:13:1' }), STEP({ step_no: 2, idempotency_key: 'casey:13:2' })] });
+  let fail = true;
+  const p2 = await pane({ chats: [{ id: 8, title: 'q' }], transcripts: { 8: { ...transcript, messages: transcript.messages.map((m) => (m.meta ? { ...m, meta: { card_id: 13 } } : m)) } }, cardsApi: { 13: again }, resume: (body) => { if (fail) { again.status = 'approved'; for (const s of again.steps) if (s.status === 'skipped') s.status = 'pending'; const e = new Error('Turn failed'); e.status = 500; throw e; } return answer('Stopped there.')(body); } });
+  p2.E('chatPick').value = '8'; p2.E('chatPick').dispatchEvent(new p2.w.Event('change')); await wait(200);
+  el = p2.d.querySelector('.card');
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Stop here').click(); await wait(300);
+  expect(p2.d.querySelector('.msg.assistant.error').textContent).toBe('Turn failed');
+  expect([...el.querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Continue', 'Stop here']);   // retryable
+  fail = false;
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Stop here').click(); await wait(300);
+  expect(p2.calls.filter((c) => c.p === '/api/casey/turn/resume').length).toBe(2);
+  expect(el.dataset.status).toBe('resumed');
+  expect([...el.querySelectorAll('.cstep')].map((s) => s.className)).toEqual(['cstep applied', 'cstep skipped']);
+  expect(el.querySelector('.cstep.skipped .outcome').textContent).toBe('not run');
+  expect([...p2.d.querySelectorAll('.msg.assistant.md:not(.error)')].pop().textContent).toMatch(/^Stopped there\./);
+});
+
+test('S3b the run stops: a FAILED middle step leaves the later steps untouched (no claim, no request); a claim answered unknown (another tab) stops before anything is sent', async () => {
+  const three = CARD({ id: 20, steps: [STEP({ idempotency_key: 'casey:20:1' }), STEP({ step_no: 2, path: '/api/events', body: '{"e":1}', idempotency_key: 'casey:20:2' }), STEP({ step_no: 3, path: '/api/notes', body: '{"n":1}', idempotency_key: 'casey:20:3' })] });
+  const routeCalls = [];
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(three), cardsApi: { 20: three }, resume: answer('Stopped after step 2.'),
+    routes: { '/api/tasks': () => { routeCalls.push('tasks'); return { ok: 1 }; }, '/api/events': () => { routeCalls.push('events'); return { __throw: { status: 500, message: 'boom', body: { message: 'boom' } } }; }, '/api/notes': () => { routeCalls.push('notes'); return { ok: 3 }; } } });
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  [...p.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(400);
+  expect(routeCalls).toEqual(['tasks', 'events']);                                                     // step 3 never sent
+  expect(p.calls.filter((c) => /cards\/20\/claim/.test(c.p)).map((c) => c.body.step)).toEqual([1, 2]);   // never claimed either
+  expect([...p.d.querySelectorAll('.cstep')].map((s) => s.className)).toEqual(['cstep applied', 'cstep failed', 'cstep skipped']);
+  expect(p.calls.filter((c) => c.p === '/api/casey/turn/resume').length).toBe(1);
+  // A claim another tab took first: 'unknown' at claim time → nothing sent for it, nothing after it; the card is re-read and NOT resumed
+  // (the other tab is mid-flight) — on an APPROVED card, where a resume would otherwise follow: Continue / Stop here come back.
+  const two = CARD({ id: 21, status: 'approved', steps: [STEP({ idempotency_key: 'casey:21:1' }), STEP({ step_no: 2, path: '/api/events', idempotency_key: 'casey:21:2' })] });
+  const sent = [];
+  const p2 = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(two), cardsApi: { 21: two }, resume: answer('Unknown.'), claimOverride: { 1: 'unknown' },
+    routes: { '/api/tasks': () => { sent.push('tasks'); return {}; }, '/api/events': () => { sent.push('events'); return {}; } } });
+  p2.E('text').value = 'go'; p2.E('send').click(); await wait(250);
+  [...p2.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Continue').click(); await wait(400);
+  expect(sent).toEqual([]);
+  expect(p2.calls.filter((c) => /cards\/21\/claim/.test(c.p)).map((c) => c.body.step)).toEqual([1]);
+  expect(p2.calls.filter((c) => /cards\/21\/settle/.test(c.p)).length).toBe(0);
+  expect(p2.calls.filter((c) => c.p === '/api/casey/turn/resume').length).toBe(0);
+  expect([...p2.d.querySelector('.card').querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Continue', 'Stop here']);
+});
+
+test('S3b B1: a request with NO answer (a network failure, no status) is NOT settled as failed — the step stays claimed (unknown), nothing after it runs, the resume tells Casey; a 502 the same; a 204 settles applied; the composer is locked while a card runs; a settle that fails once is retried', async () => {
+  // No status at all.
+  const c1 = CARD({ id: 30, steps: [STEP({ idempotency_key: 'casey:30:1' }), STEP({ step_no: 2, path: '/api/events', idempotency_key: 'casey:30:2' })] });
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(c1), cardsApi: { 30: c1 }, resume: answer('I cannot tell whether it landed.'),
+    routes: { '/api/tasks': () => ({ __throw: { message: 'Failed to fetch' } }), '/api/events': () => { throw new Error('must not run'); } } });
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  const el = p.d.querySelector('.card');
+  [...el.querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(400);
+  expect(p.calls.filter((c) => /cards\/30\/settle/.test(c.p)).length).toBe(0);                 // never settled: unknown, not failed
+  expect(p.calls.filter((c) => /cards\/30\/claim/.test(c.p)).map((c) => c.body.step)).toEqual([1]);
+  expect(c1.steps[0].status).toBe('claimed');
+  expect(el.querySelector('.state.err').textContent).toMatch(/^Step 1: no answer came back \(Failed to fetch\)\. It may or may not have been applied/);
+  expect(p.calls.filter((c) => c.p === '/api/casey/turn/resume').length).toBe(1);               // Casey is told (UNKNOWN in the outcome)
+  expect([...el.querySelectorAll('.cstep')].map((s) => s.className)).toEqual(['cstep unknown', 'cstep skipped']);
+  // A 502 from the edge: the same; a 500 FROM the route is a failure.
+  for (const [status, settled] of [[502, 0], [504, 0], [500, 1], [422, 1]]) {
+    const c = CARD({ id: 40 + status, steps: [STEP({ idempotency_key: `casey:${40 + status}:1` })] });
+    const q = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(c), cardsApi: { [40 + status]: c }, resume: answer('ok'), routes: { '/api/tasks': () => ({ __throw: { status, message: 'x', body: { message: 'x' } } }) } });
+    q.E('text').value = 'go'; q.E('send').click(); await wait(250);
+    [...q.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(300);
+    expect([status, q.calls.filter((x) => /settle/.test(x.p)).length]).toEqual([status, settled]);
+    if (settled) expect(q.calls.find((x) => /settle/.test(x.p)).body).toMatchObject({ status: 'failed', http_status: status });
+  }
+  // A 204 (apiSend's null) settles applied with 204; the composer is disabled while the step is in flight; a settle failing once is retried.
+  const c2 = CARD({ id: 31, steps: [STEP({ method: 'DELETE', path: '/api/tasks/5', body: null, idempotency_key: 'casey:31:1' })] });
+  let settleFails = 1; let sendDisabledMidRun = null;
+  const p2 = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(c2), cardsApi: { 31: c2 }, resume: answer('Deleted.'),
+    routes: { '/api/tasks/5': async () => { await wait(120); return null; } } });
+  const realSend = p2.w.__parent.apiSend;
+  p2.w.__parent.apiSend = async (path, method, body, headers, opts) => { if (/settle/.test(path) && settleFails-- > 0) { const e = new Error('blip'); throw e; } return realSend(path, method, body, headers, opts); };
+  p2.E('text').value = 'go'; p2.E('send').click(); await wait(250);
+  [...p2.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click();
+  await wait(60); sendDisabledMidRun = p2.E('send').disabled;
+  await wait(500);
+  expect(sendDisabledMidRun).toBe(true);
+  expect(p2.calls.filter((c) => /cards\/31\/settle/.test(c.p)).length).toBe(1);                 // the recorded one (the failed attempt threw before the fake recorded it)
+  expect(p2.calls.find((c) => /cards\/31\/settle/.test(c.p)).body).toMatchObject({ status: 'applied', http_status: 204, result: null });
+  expect(p2.calls.filter((c) => c.p === '/api/casey/turn/resume').length).toBe(1);
+  expect(p2.E('send').disabled).toBe(false);
+});
+
+test('S3b N5/N6/N7: a plain turn the server refuses leaves an open card untouched; a preamble streamed before the card is kept as the answer above it; the outcome note is keyed by the row\'s meta, not by its text', async () => {
+  // N5: the 409 arrives before any `chat` line → the card keeps its buttons.
+  const card = CARD({ id: 50, steps: [STEP({ idempotency_key: 'casey:50:1' })] });
+  let first = true;
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], cardsApi: { 50: card }, turn: (body) => { if (first) { first = false; return cardTurn(card)(body); } const e = new Error('A turn is already running in this chat'); e.status = 409; throw e; } });
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  p.E('text').value = 'and?'; p.E('send').click(); await wait(250);
+  const el = p.d.querySelector('.card');
+  expect(el.dataset.status).toBe('proposed');
+  expect([...el.querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Approve', 'Decline']);
+  expect(p.d.querySelector('.msg.assistant.error').textContent).toBe('A turn is already running in this chat');
+  // N6: a preamble before the card.
+  const pre = CARD({ id: 51, steps: [STEP({ idempotency_key: 'casey:51:1' })] });
+  const p2 = await pane({ chats: [{ id: 8, title: 'q' }], cardsApi: { 51: pre }, turn: (body) => ndjson([{ type: 'chat', id: 8, title: 'q', model: 'm', created: false }, { type: 'delta', text: 'I will **create** it:' }, { type: 'card', card: pre }, { type: 'final', body: { chat_id: 8, text: '', calls: 1, cost_cents: 0, ms: 1, limited: false, stopped: false, card_id: 51 } }]) });
+  p2.E('text').value = 'go'; p2.E('send').click(); await wait(250);
+  const bubble = p2.d.querySelector('.msg.assistant.md');
+  expect(bubble.classList.contains('streaming')).toBe(false);
+  expect(bubble.querySelector('strong').textContent).toBe('create');
+  expect(bubble.querySelector('.meta')).toBeNull();
+  expect(p2.d.querySelector('.card').dataset.cardId).toBe('51');
+  // N7: a user message that starts with "[Card " is the user's words unless the row's meta says it is an outcome.
+  const messages = [
+    { seq: 1, role: 'user', content: [T('[context — refreshed each turn]\nx'), T('[Card games] are fun, right?')] },
+    { seq: 2, role: 'assistant', content: [T('Sure.')] },
+    { seq: 3, role: 'user', content: [T('[context — refreshed each turn]\nx'), T('[Card 9 — approved by the user; 1 of 1 step applied.]\nStep 1: …')], meta: { card_outcome: { card_id: 9, status: 'resumed', steps: ['applied'] } } },
+    { seq: 4, role: 'assistant', content: [T('Done.')] },
+  ];
+  const p3 = await pane({ chats: [{ id: 8, title: 'q' }], transcripts: { 8: { status: 'success', chat: { id: 8, title: 'q', model: 'm' }, messages } } });
+  p3.E('chatPick').value = '8'; p3.E('chatPick').dispatchEvent(new p3.w.Event('change')); await wait(200);
+  expect([...p3.d.querySelectorAll('.msg.user')].map((n) => n.textContent)).toEqual(['[Card games] are fun, right?']);
+  expect([...p3.d.querySelectorAll('.trail .note')].map((n) => n.textContent)).toEqual(['[Card 9 — approved by the user; 1 of 1 step applied.]']);
+});
+
+test('S3b SF1/N-b/N-d: a successful step announces itself on the parent\'s sync bus (the response path skips the shell\'s own sniff); a 404 on the settle retry counts as recorded; a plain turn accepted then rolled back re-reads the cards it painted', async () => {
+  // SF1: the sniff gets the method, the path and the parsed result.
+  const card = CARD({ id: 60, steps: [STEP({ method: 'PATCH', path: '/api/contacts/12?x=1', body: '{"first_name":"Ann"}', idempotency_key: 'casey:60:1' })] });
+  const sniffed = [];
+  const p = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(card), cardsApi: { 60: card }, resume: answer('Renamed.'), routes: { '/api/contacts/12?x=1': () => ({ status: 'success', changes: { first_name: 'Ann' } }) } });
+  p.w.__parent.YC = { _sniff: (m, e, b) => sniffed.push([m, e, b]) };
+  p.E('text').value = 'go'; p.E('send').click(); await wait(250);
+  [...p.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(400);
+  expect(sniffed).toEqual([['PATCH', '/api/contacts/12?x=1', { status: 'success', changes: { first_name: 'Ann' } }]]);
+  expect(p.calls.find((c) => /cards\/60\/settle/.test(c.p)).body).toMatchObject({ status: 'applied', http_status: 200 });
+  // N-b: the first settle landed but its answer was lost → the retry 404s → recorded, no note, the run goes on to the resume.
+  const c2 = CARD({ id: 61, steps: [STEP({ idempotency_key: 'casey:61:1' })] });
+  const p2 = await pane({ chats: [{ id: 8, title: 'q' }], turn: cardTurn(c2), cardsApi: { 61: c2 }, resume: answer('ok'), routes: { '/api/tasks': () => ({ ok: 1 }) } });
+  const real = p2.w.__parent.apiSend; let first = true;
+  p2.w.__parent.apiSend = async (path, method, body, headers, opts) => { if (/settle/.test(path) && first) { first = false; await real(path, method, body, headers, opts); const e = new Error('lost'); throw e; } return real(path, method, body, headers, opts); };   // recorded server-side, answer lost
+  p2.E('text').value = 'go'; p2.E('send').click(); await wait(250);
+  [...p2.d.querySelector('.card').querySelectorAll('.actions button')].find((b) => b.textContent === 'Approve').click(); await wait(400);
+  expect(p2.d.querySelector('.card .state.err')).toBeNull();
+  expect(p2.d.querySelector('.card').dataset.status).toBe('resumed');
+  expect(p2.calls.filter((c) => c.p === '/api/casey/turn/resume').length).toBe(1);
+  // N-d: a plain turn the server accepts (chat line) then rolls back (error, no final) → the card is re-read and its buttons are back.
+  const c3 = CARD({ id: 62, steps: [STEP({ idempotency_key: 'casey:62:1' })] });
+  let n = 0;
+  const p3 = await pane({ chats: [{ id: 8, title: 'q' }], cardsApi: { 62: c3 }, turn: (body) => (++n === 1 ? cardTurn(c3)(body) : ndjson([{ type: 'chat', id: 8, title: 'q', model: 'm', created: false }, { type: 'error', status: 502, message: 'The model call failed (api_error)' }])) });
+  p3.E('text').value = 'go'; p3.E('send').click(); await wait(250);
+  p3.E('text').value = 'never mind'; p3.E('send').click(); await wait(300);
+  const el3 = p3.d.querySelector('.card');
+  expect(el3.dataset.status).toBe('proposed');                                                      // re-read from the (unchanged) fake: open again
+  expect([...el3.querySelectorAll('.actions button')].map((b) => b.textContent)).toEqual(['Approve', 'Decline']);
+  expect(el3.textContent).not.toMatch(/Not acted on/);
 });

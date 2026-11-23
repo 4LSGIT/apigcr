@@ -156,4 +156,6 @@ module.exports = {
     try { body = JSON.parse(text); } catch (_) { throw new ToolError('BAD_JSON', `the route answered ${res.status} with unparseable JSON`, { route: row.path, status: res.status }); }
     return { route: row.path, status: res.status, body };
   },
+  // Shared with api_write (S3b): the same path rules and query building for a card's steps.
+  cleanPath, queryString,
 };

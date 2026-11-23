@@ -31,8 +31,25 @@ retry). **Stop** ends a turn
 that is taking too long; **Keep going** appears when Casey hit the per-turn
 limit before finishing. The **current view** chip tells Casey which case,
 contact or tab you are looking at ("this case" means that one); remove it to
-ask in general. In this preview Casey v2 is read-only: it will tell you what a
-change would take, and which screen does it, but it cannot make changes yet.
+ask in general.
+
+**Changes are cards.** Casey v2 never changes anything by itself. When you ask
+for a change — create a task, send a message, update a record — it proposes a
+**card**: a one-line summary in Casey's words, then each step it wants to run
+(the request and why), and the exact content that would be sent. For an
+ordinary write the details sit under **Details**; for a sensitive one (a send,
+a delete) the content is shown open with a warning, and a superuser action is
+labelled as such (your password may be asked for, as on the admin pages).
+Read the content, not just the summary — the content is what is sent. Click
+**Approve** to run the steps, in order, as yourself (each step shows applied or
+failed; a later step is not run after a failure), or **Decline**, optionally
+telling Casey why. Either way Casey is told exactly what happened and answers;
+typing another message instead counts as declining. If a card from an earlier
+visit is still waiting, reopen the chat: a card you never answered can still
+be approved or declined; one that ran partway offers **Continue** or **Stop
+here**. A step that shows as *unknown* was sent but its result was never
+recorded — check the record before asking for it again.
+
 Everything below describes the previous Casey, which the button opens while
 the setting is off.
 

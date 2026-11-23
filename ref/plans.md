@@ -2747,6 +2747,19 @@ edge; position-only loss, accepted.
   for the aiService foundation slice and have no caller. Remove the env var
   from the service and delete the file + its routeCatalog expectations in one
   slice; Fred undecided as of S2.
+- **Casey v2 S3b follow-ups** (2026-11-23): S3c takes `$N.field`
+  substitution between a card's steps (api_write refuses a reference today —
+  two cards), an abort on client disconnect, and the chat size guard. Optional
+  hardening: wire `Idempotency-Key` on the four proposable sends that lack it
+  (`POST /api/campaigns/test-send`, `POST /api/compose-docs-message`, the SU
+  `POST /api/cta/:id/send` and `POST /api/phone-lines/admin/:id/test-sms`,
+  design §8.6) — the ledger claim guards them meanwhile. v1's
+  `assistant_action_ledger` and the `/api/assistant/actions/*` routes stay
+  until S6 retires v1. A card's step `result` is stored as the browser
+  reported it (cut to 16 KB); the model gets it in the outcome message — a
+  route whose answer carries a secret would reach the chat that way, so
+  SECRET_RETURNING routes are never proposable (unchanged); review the list
+  when a new write returns credential material.
 - **Casey v2 S3a follow-ups** (2026-11-22): the Ask Casey manual chapter
   (`manual/05-Subsystems/17-ask-yisracase.md`) describes v1; it carries a
   short v2 preview note from S3a and gets its rewrite when v2 replaces v1

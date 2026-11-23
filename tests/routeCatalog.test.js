@@ -313,8 +313,8 @@ describe('snapshots — a change here is a deliberate review', () => {
       'POST /api/ai/file', 'POST /api/api-keys', 'POST /api/api-keys/rotate-internal', 'POST /api/assistant/actions/:draftId/claim', 'POST /api/assistant/actions/:draftId/result', 'POST /api/assistant/actions/reconcile',
       'POST /api/assistant/chats', 'DELETE /api/assistant/chats/:id(\\d+)', 'PATCH /api/assistant/chats/:id(\\d+)', 'POST /api/assistant/chats/:id(\\d+)/messages',
       'POST /api/assistant/execute', 'POST /api/assistant/plan', 'POST /api/auth/change-password', 'POST /api/auth/update-profile',
-      'DELETE /api/casey/chats/:id', 'POST /api/casey/tools/:name', 'POST /api/casey/turn', 'POST /api/casey/turn/stop',
-      'POST /api/esign/:id/resend', 'POST /api/esign/:id/satisfied-external', 'POST /api/esign/send', 'POST /api/esign/templates/:id/pdf',
+      'POST /api/casey/cards/:id/claim', 'POST /api/casey/cards/:id/decline', 'POST /api/casey/cards/:id/settle', 'DELETE /api/casey/chats/:id', 'POST /api/casey/tools/:name', 'POST /api/casey/turn', 'POST /api/casey/turn/resume', 'POST /api/casey/turn/stop',
+      'POST /api/esign/:id/resend', 'POST /api/esign/:id/satisfied-external', 'POST /api/esign/send', 'POST /api/esign/templates/:id/pdf', 'POST /api/hooks/:id/duplicate',
       'POST /api/impersonation/exit', 'POST /api/impersonation/mode', 'POST /api/impersonation/users/:id/start', 'POST /api/pdf/parse',
       'POST /api/readonly-keys', 'POST /internal/dropbox/create-folder', 'POST /internal/email-test/send', 'POST /internal/email/send', 'POST /internal/hook-replay',
       'POST /internal/mms/send', 'POST /internal/sequence/enroll', 'POST /internal/sms/send',
@@ -325,7 +325,7 @@ describe('snapshots — a change here is a deliberate review', () => {
 
   test('closed staff GETs (not auto, not a card) — credential-returning reads and plumbing', () => {
     expect(rows.filter(r => STAFF.has(r.authClass) && r.authClass !== 'su' && r.method === 'GET' && !r.autoGet).map(at)).toEqual([
-      'GET /api/assistant/chats', 'GET /api/assistant/chats/:id(\\d+)', 'GET /api/casey/boot', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/comms-archive/media/:id/url', 'GET /api/credentials', 'GET /api/email-credentials',
+      'GET /api/assistant/chats', 'GET /api/assistant/chats/:id(\\d+)', 'GET /api/casey/boot', 'GET /api/casey/cards/:id', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/comms-archive/media/:id/url', 'GET /api/credentials', 'GET /api/email-credentials',
       'GET /api/hooks', 'GET /api/hooks/:id', 'GET /api/impersonation/users', 'GET /auth/validate', 'GET /clio-code',
       'GET /internal/email-test/credentials', 'GET /internal/email-test/credentials/oauth',
     ]);
@@ -420,6 +420,20 @@ describe('snapshots — a change here is a deliberate review', () => {
     expect(TOKENS.filter(t => synth.handler.toString().includes(t))).toEqual(['.query(trimmed']);
     expect(byKey.get('GET /api/hooks').handler.toString()).toContain('withReadableAuth');
     expect(byKey.get('GET /clio-code').handler.toString()).toContain('clio_login_code');
+  });
+
+  test('backstop (S3b): no PROPOSABLE write handler decrypts a secret or forwards request text as SQL — a card\'s answer reaches the model', () => {
+    // The send tokens are expected on send routes (T2 / T3 cards by design); everything else is a leak. A BACKSTOP only:
+    // it reads the handler's own source, so a secret returned through a service (the hook duplicate echoes getHookById's
+    // row with its targets' headers) is invisible to it — those are found in review and pinned in SECRET_RETURNING.
+    const SECRET = ['withReadableAuth', 'decrypt(', 'decryptSecret', 'revealSecret', 'clio_login_code', '.query(trimmed', 'db.query(req.query'];
+    const offenders = [];
+    for (const r of rows.filter(r => r.proposable && r.method !== 'GET')) {
+      const src = r.handler.toString();
+      for (const t of SECRET) if (src.includes(t)) offenders.push(`${at(r)} — ${t}`);
+    }
+    expect(offenders).toEqual([]);
+    expect(byKey.get('POST /api/hooks/:id/duplicate')).toMatchObject({ proposable: false, tierReason: 'returns a secret' });   // echoes the targets' headers
   });
 });
 

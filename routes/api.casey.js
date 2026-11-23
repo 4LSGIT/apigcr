@@ -13,6 +13,19 @@
 //     them all and the shell loads the v1 pane instead. GET /api/casey/boot
 //     tells the shell and the page which Casey is on; POST /api/casey/turn/stop
 //     marks a running turn to end. The tools / catalog routes stay SU-only.
+// S3b: cards. api_write (services/casey/tools/api_write.js) PROPOSES writes;
+//     the turn ends with a `card` line; the page runs the steps as the user
+//     through the shell's apiSend, claiming and settling each in the ledger
+//     (services/casey/cards.js), then POST /api/casey/turn/resume feeds the
+//     outcome — built from the ledger — to the model as the next user message.
+//
+//   GET  /api/casey/cards/:id                 → { status, card } (mine; steps with their content blocks)
+//   POST /api/casey/cards/:id/claim {step}    → { status, outcome:'claimed', claim_token, step } | outcome 'applied' | 'unknown' | 'closed' | 'out_of_order'
+//   POST /api/casey/cards/:id/settle {step, claim_token, status:'applied'|'failed', http_status, result}
+//                                             → { status, settled:true } (404 when the token / state does not match)
+//   POST /api/casey/cards/:id/decline {note?} → { status, declined:true } (409 unless the card is still proposed)
+//   POST /api/casey/turn/resume {chat_id, card_id, context?}
+//                                             → the NDJSON stream of /turn (the turn's user message is the card's outcome)
 //
 //   GET /api/casey/catalog?family=&class=&tier=&method=&q=&unknown=1
 //     → { status:'success', summary, filters, rows:[...], unknown:[...] }
@@ -34,8 +47,10 @@
 //       {type:'tool_call', id, name, input}
 //       {type:'tool_result', id, name, ok, code, bytes, ms, truncated}
 //       {type:'heartbeat'} (every 15 s while a tool or the model runs)
+//       {type:'card', card:{id, tier, summary, status, steps:[{step_no, method, path, body, purpose, status, content, …}]}}
+//                   (S3b: the turn ends on it; the final that follows has text '' and card_id)
 //       {type:'final', body:{chat_id, message_id, seq, text, usage, cost_cents,
-//                            calls, tool_calls, limited, ms, model, effort, prompt_version}}
+//                            calls, tool_calls, limited, card_id, ms, model, effort, prompt_version}}
 //       {type:'error', status, message, detail?}  — a failure after the stream began
 //     Before the stream begins the answer is plain JSON: 400 (text missing /
 //     > 4,000 chars / bad chat_id), 403 (dark), 404 (not this user's chat),
@@ -195,7 +210,8 @@ router.get('/api/casey/boot', ...staff, (req, res) => {
   });
 });
 
-router.post('/api/casey/turn', ...staff, async (req, res) => {
+/** Validate the shared turn body and stream one turn (POST /turn and /turn/resume). `extra` adds to the loop's options after validation. */
+async function streamTurn(req, res, { resume = false } = {}) {
   if (dark(res) || notViewAs(res, req.auth)) return;
   if (turnLimited(`u${req.auth.userId}`)) {
     return res.status(429).json({ status: 'error', message: 'You have asked Casey a lot of questions this hour. Try again later.' });
@@ -208,7 +224,13 @@ router.post('/api/casey/turn', ...staff, async (req, res) => {
     chatId = chatIdParam(body.chat_id);
     if (chatId === null) return res.status(400).json({ status: 'error', message: 'chat_id must be a positive integer' });
   }
-  if (typeof body.text !== 'string') return res.status(400).json({ status: 'error', message: 'text is required' });
+  let cardId = null;
+  if (resume) {
+    if (chatId === null) return res.status(400).json({ status: 'error', message: 'chat_id is required' });
+    cardId = chatIdParam(body.card_id);
+    if (cardId === null) return res.status(400).json({ status: 'error', message: 'card_id must be a positive integer' });
+    if (body.text !== undefined && body.text !== null && typeof body.text !== 'string') return res.status(400).json({ status: 'error', message: 'text must be a string' });
+  } else if (typeof body.text !== 'string') return res.status(400).json({ status: 'error', message: 'text is required' });
   if (body.context !== undefined && body.context !== null && (typeof body.context !== 'object' || Array.isArray(body.context))) {
     return res.status(400).json({ status: 'error', message: 'context must be an object' });
   }
@@ -224,7 +246,8 @@ router.post('/api/casey/turn', ...staff, async (req, res) => {
     await loop.runTurn(req.db, {
       ctx: tools.ctxFromRequest(req, 'casey'),
       chatId,
-      text: body.text,
+      text: typeof body.text === 'string' ? body.text : '',
+      cardId,
       context: body.context || null,
       model: body.model || null,
       send,
@@ -244,6 +267,83 @@ router.post('/api/casey/turn', ...staff, async (req, res) => {
     send({ type: 'error', status: 500, message: 'Turn failed' });
   }
   if (!res.writableEnded) res.end();
+}
+
+router.post('/api/casey/turn', ...staff, (req, res) => streamTurn(req, res));
+// S3b: continue the chat with a card's outcome (approved and run, or declined) as the user message.
+router.post('/api/casey/turn/resume', ...staff, (req, res) => streamTurn(req, res, { resume: true }));
+
+// ── S3b: cards ───────────────────────────────────────────────────────────
+// The browser's side of the ledger (services/casey/cards.js): read the card,
+// claim a step before sending its request, settle it after, or decline. All
+// scoped to the caller's own cards; dark with the flag.
+router.get('/api/casey/cards/:id', ...staff, async (req, res) => {
+  if (dark(res) || notViewAs(res, req.auth)) return;
+  try {
+    const cards = require('../services/casey/cards'); // lazy require (convention)
+    const id = chatIdParam(req.params.id);
+    const card = id === null ? null : await cards.getCard(req.db, id, req.auth.userId);
+    if (!card) return res.status(404).json({ status: 'error', message: 'No such card' });
+    res.json({ status: 'success', card: cards.present(card) });
+  } catch (err) {
+    console.error('[api.casey] card read error:', err);
+    res.status(500).json({ status: 'error', message: 'Card read failed' });
+  }
+});
+
+router.post('/api/casey/cards/:id/claim', ...staff, async (req, res) => {
+  if (dark(res) || notViewAs(res, req.auth)) return;
+  try {
+    const cards = require('../services/casey/cards'); // lazy require (convention)
+    const id = chatIdParam(req.params.id);
+    const step = chatIdParam(req.body && req.body.step);
+    if (id === null || step === null) return res.status(400).json({ status: 'error', message: 'card id and step must be positive integers' });
+    const out = await cards.claimStep(req.db, id, req.auth.userId, step);
+    if (!out) return res.status(404).json({ status: 'error', message: 'No such card or step' });
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    console.error('[api.casey] card claim error:', err);
+    res.status(500).json({ status: 'error', message: 'Claim failed' });
+  }
+});
+
+router.post('/api/casey/cards/:id/settle', ...staff, async (req, res) => {
+  if (dark(res) || notViewAs(res, req.auth)) return;
+  try {
+    const cards = require('../services/casey/cards'); // lazy require (convention)
+    const id = chatIdParam(req.params.id);
+    const b = req.body || {};
+    const step = chatIdParam(b.step);
+    if (id === null || step === null) return res.status(400).json({ status: 'error', message: 'card id and step must be positive integers' });
+    if (typeof b.claim_token !== 'string' || !b.claim_token) return res.status(400).json({ status: 'error', message: 'claim_token is required' });
+    if (!['applied', 'failed'].includes(b.status)) return res.status(400).json({ status: 'error', message: 'status must be applied or failed' });
+    const httpStatus = Number.isInteger(b.http_status) && b.http_status >= 100 && b.http_status <= 599 ? b.http_status : null;
+    const settled = await cards.settleStep(req.db, id, req.auth.userId, step, b.claim_token, { status: b.status, httpStatus, result: b.result });
+    if (!settled) return res.status(404).json({ status: 'error', message: 'No claimed step matches that token' });
+    res.json({ status: 'success', settled: true });
+  } catch (err) {
+    console.error('[api.casey] card settle error:', err);
+    res.status(500).json({ status: 'error', message: 'Settle failed' });
+  }
+});
+
+router.post('/api/casey/cards/:id/decline', ...staff, async (req, res) => {
+  if (dark(res) || notViewAs(res, req.auth)) return;
+  try {
+    const cards = require('../services/casey/cards'); // lazy require (convention)
+    const id = chatIdParam(req.params.id);
+    if (id === null) return res.status(400).json({ status: 'error', message: 'card id must be a positive integer' });
+    const note = req.body && req.body.note;
+    if (note !== undefined && note !== null && typeof note !== 'string') return res.status(400).json({ status: 'error', message: 'note must be a string' });
+    const card = await cards.getCard(req.db, id, req.auth.userId);
+    if (!card) return res.status(404).json({ status: 'error', message: 'No such card' });
+    const declined = await cards.declineCard(req.db, id, req.auth.userId, note ? note.trim().slice(0, cards.NOTE_MAX) : null);
+    if (!declined) return res.status(409).json({ status: 'error', message: `This card is ${card.status}; only a proposed card can be declined` });
+    res.json({ status: 'success', declined: true });
+  } catch (err) {
+    console.error('[api.casey] card decline error:', err);
+    res.status(500).json({ status: 'error', message: 'Decline failed' });
+  }
 });
 
 // The page's Stop: marks the running turn; the loop ends it before its next model call.

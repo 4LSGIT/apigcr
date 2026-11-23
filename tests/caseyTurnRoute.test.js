@@ -23,6 +23,7 @@ jest.mock('../lib/firmConfig', () => {
   const actual = jest.requireActual('../lib/firmConfig');
   return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flags.v2 : k === 'casey_v2_models' ? flags.models : k === 'casey_v2_model_notes' ? null : k === 'casey_v2_model' ? 'claude-opus-5-5' : k === 'casey_v2_effort' ? null : k === 'internal_api_key' ? 'yci_TESTINTERNALKEYFORCASEY00' : k === 'internal_api_key_prev' ? null : actual.cfg(k))) };   // secret-scan: allow (a test constant)
 });
+jest.mock('../services/casey/cards', () => require('./helpers/caseyMemoryCards').make(jest.requireActual('../services/casey/cards')));   // S3b: the ledger, in memory (the real store: tests/caseyCards.mysql.test.js)
 const mockStore = { chats: new Map(), messages: new Map(), nextChat: 1, nextMsg: 1 };
 jest.mock('../services/casey/chats', () => {
   const actual = jest.requireActual('../services/casey/chats');
@@ -55,6 +56,8 @@ jest.mock('../services/casey/chats', () => {
 
 const { mintElevationToken } = require('../lib/auth.superuser');
 const router = require('../routes/api.casey');
+const cards = require('../services/casey/cards');
+const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 
 // ── the db stub: credentials, ai_calls, the spend reads ───────────────────
 const CRED_ROW = { id: 12, name: 'Claude', type: 'api_key', config: JSON.stringify({ header: 'x-api-key', key: 'test-key' }), allowed_urls: null, access_token: null, oauth_status: null, verbose: 0 };
@@ -109,12 +112,17 @@ beforeAll(async () => {
   app.use(router);
   const api = require('../routes/availabilityAdmin'); // GET /api/availability-blocks: one autoGet staff route for api_get
   app.use(api);
+  // S3b: a proposable staff write (T1) for api_write's card; the browser — not the loop — calls it. It records what it got.
+  const probe = express.Router();
+  probe.post('/api/_casey_route/write', jwtOrApiKey, (req, res) => { writeHits.push({ body: req.body, idem: req.headers['idempotency-key'] || null, user: req.auth.username }); res.status(201).json({ status: 'success', id: 77 }); });
+  app.use(probe);
   server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   port = server.address().port;
   process.env.PORT = String(port);    // ctxFromRequest reads it: api_get loops back to THIS app
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); delete process.env.PORT; });
-beforeEach(() => { flags.v2 = null; flags.models = null; apiScript = []; apiBodies = []; aiRows.length = 0; spendState.cap = null; spendState.spent = 0; mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; });
+const writeHits = [];
+beforeEach(() => { flags.v2 = null; flags.models = null; apiScript = []; apiBodies = []; aiRows.length = 0; spendState.cap = null; spendState.spent = 0; mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; cards._store.reset(); writeHits.length = 0; });
 
 const su = jwt.sign({ sub: 6, username: 'IT', user_auth: 'authorized', roles: ['su'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
 const staff = jwt.sign({ sub: 7, username: 'rena', user_auth: 'authorized', roles: ['admin'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
@@ -145,11 +153,12 @@ test('S3a gate: any signed-in staff person, no elevation; a machine key and no t
     const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: { 'content-type': 'application/json', 'x-api-key': 'yci_TESTINTERNALKEYFORCASEY00' } }, (res) => { let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => { try { resolve({ status: res.statusCode, body: JSON.parse(d) }); } catch (e) { resolve({ status: res.statusCode, body: d }); } }); });
     req.on('error', reject); req.end(body === undefined ? undefined : JSON.stringify(body));
   });
-  for (const [m, p, b] of [['POST', '/api/casey/turn', { text: 'hi' }], ['POST', '/api/casey/turn/stop', { chat_id: 1 }], ['GET', '/api/casey/chats'], ['GET', '/api/casey/chats/1'], ['DELETE', '/api/casey/chats/1'], ['GET', '/api/casey/boot']]) {
+  const CARD_ROUTES = [['POST', '/api/casey/turn/resume', { chat_id: 1, card_id: 1 }], ['GET', '/api/casey/cards/1'], ['POST', '/api/casey/cards/1/claim', { step: 1 }], ['POST', '/api/casey/cards/1/settle', { step: 1, claim_token: 'x', status: 'applied' }], ['POST', '/api/casey/cards/1/decline', {}]];   // S3b
+  for (const [m, p, b] of [['POST', '/api/casey/turn', { text: 'hi' }], ['POST', '/api/casey/turn/stop', { chat_id: 1 }], ['GET', '/api/casey/chats'], ['GET', '/api/casey/chats/1'], ['DELETE', '/api/casey/chats/1'], ['GET', '/api/casey/boot'], ...CARD_ROUTES]) {
     expect(await asKey(m, p, b)).toMatchObject({ status: 403, body: { status: 'error', message: 'Casey requires a signed-in staff user.' } });
   }
   flags.v2 = '0';
-  for (const [m, p, b] of [['POST', '/api/casey/turn', { text: 'hi' }], ['POST', '/api/casey/turn/stop', { chat_id: 1 }], ['GET', '/api/casey/chats'], ['GET', '/api/casey/chats/1'], ['DELETE', '/api/casey/chats/1']]) {
+  for (const [m, p, b] of [['POST', '/api/casey/turn', { text: 'hi' }], ['POST', '/api/casey/turn/stop', { chat_id: 1 }], ['GET', '/api/casey/chats'], ['GET', '/api/casey/chats/1'], ['DELETE', '/api/casey/chats/1'], ...CARD_ROUTES]) {
     const r = await call(m, p, { token: staff, elevate: false, body: b });
     expect(r).toMatchObject({ status: 403, body: { status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' } });
   }
@@ -180,7 +189,7 @@ test('S3a review: a View-as session is refused on every v2 route; the per-user t
     expect(r.status).toBe(403);
     expect(r.body.code === 'view_as_read_only' || r.body.message === 'Casey is not available in a View-as session.').toBe(true);
   }
-  for (const p of ['/api/casey/chats', '/api/casey/chats/1', '/api/casey/boot']) {
+  for (const p of ['/api/casey/chats', '/api/casey/chats/1', '/api/casey/boot', '/api/casey/cards/1']) {
     expect(await call('GET', p, { token: viewAs, elevate: false })).toMatchObject({ status: 403, body: { status: 'error', message: 'Casey is not available in a View-as session.' } });
   }
   // The limiter counts attempts per user and sits AFTER the flag and the view-as check, BEFORE the loop:
@@ -268,7 +277,7 @@ test('a whole turn as NDJSON: headers, event order, tools run as the SU over loo
   // What the model was sent: two requests, the second carrying the tool results of the SU's own identity and the loopback GET.
   expect(apiBodies).toHaveLength(2);
   expect(apiBodies[0]).toMatchObject({ model: 'claude-opus-5-5', output_config: { effort: 'medium' }, thinking: { type: 'adaptive' }, stream: true });
-  expect(apiBodies[0].tools.map((t) => t.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs']);
+  expect(apiBodies[0].tools.map((t) => t.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs', 'api_write']);
   expect(apiBodies[0].thinking).toEqual({ type: 'adaptive', display: 'summarized' });
   expect(apiBodies[0].messages[0].content[0].text).toMatch(/\nPage: Cases tab$/);
   const results = apiBodies[1].messages[2].content;
@@ -312,4 +321,83 @@ test('a model failure after the stream began is an error line, not a broken resp
   expect(r.lines.map((l) => l.type)).toEqual(['chat', 'error']);
   expect(r.lines[1]).toMatchObject({ type: 'error', status: 502, message: 'The model call failed (api_error)', detail: 'http_529' });
   expect(mockStore.chats.size).toBe(0);
+});
+
+test('S3b a card end to end: the turn ends on the `card` line; the browser claims, calls the route itself (as the user, with the Idempotency-Key), settles, and resumes — the model is then sent the LEDGER\'s outcome; the card routes are scoped and validated', async () => {
+  const W = { type: 'tool_use', id: 'tuW', name: 'api_write', input: { summary: 'Create the record', steps: [{ method: 'POST', path: '/api/_casey_route/write', body: { title: 'From Casey', n: 2 }, purpose: 'create it' }] } };
+  apiScript = [streamResponse(sse([{ type: 'text', text: 'Here is the card.' }, W], 'tool_use'))];
+  const r = await turn({ text: 'Create the record', context: { label: 'Tasks' } }, { elevate: false });
+  expect(r.status).toBe(200);
+  expect(r.lines.map((l) => l.type)).toEqual(['chat', 'delta', 'tool_call', 'tool_result', 'card', 'final']);
+  const card = r.lines[4].card;
+  expect(card).toMatchObject({ id: 1, chat_id: 1, tier: 1, summary: 'Create the record', status: 'proposed', steps: [{ step_no: 1, method: 'POST', path: '/api/_casey_route/write', body: '{"title":"From Casey","n":2}', status: 'pending', idempotency_key: 'casey:1:1', content: { kind: 'fields', fields: [{ label: 'title', value: 'From Casey' }, { label: 'n', value: '2' }] } }] });
+  expect(card.steps[0].claim_token).toBeUndefined();   // never leaves the store
+  expect(r.lines[5].body).toMatchObject({ card_id: 1, text: '', calls: 1 });
+  expect(apiBodies).toHaveLength(1);
+  expect(writeHits).toEqual([]);                      // the server ran nothing
+
+  // The card read: mine only, present() content blocks.
+  expect((await call('GET', '/api/casey/cards/1', { elevate: false })).body.card).toMatchObject({ id: 1, status: 'proposed' });
+  expect((await call('GET', '/api/casey/cards/1', { token: staff, elevate: false })).status).toBe(404);
+  expect((await call('GET', '/api/casey/cards/x', { elevate: false })).status).toBe(404);
+  // A resume before anything happened: 409.
+  expect(await call('POST', '/api/casey/turn/resume', { elevate: false, body: { chat_id: 1, card_id: 1 } })).toMatchObject({ status: 409, body: { message: expect.stringMatching(/approve or decline/) } });
+  expect(await call('POST', '/api/casey/turn/resume', { elevate: false, body: { card_id: 1 } })).toMatchObject({ status: 400, body: { message: 'chat_id is required' } });
+  expect(await call('POST', '/api/casey/turn/resume', { elevate: false, body: { chat_id: 1 } })).toMatchObject({ status: 400, body: { message: 'card_id must be a positive integer' } });
+  expect(await call('POST', '/api/casey/turn/resume', { elevate: false, body: { chat_id: 1, card_id: 1, text: 5 } })).toMatchObject({ status: 400, body: { message: 'text must be a string' } });
+  // Claim validation and scoping; a settle without a claim.
+  expect(await call('POST', '/api/casey/cards/1/claim', { elevate: false, body: {} })).toMatchObject({ status: 400 });
+  expect(await call('POST', '/api/casey/cards/1/claim', { token: staff, elevate: false, body: { step: 1 } })).toMatchObject({ status: 404 });
+  expect(await call('POST', '/api/casey/cards/1/claim', { elevate: false, body: { step: 2 } })).toMatchObject({ status: 404 });
+  expect(await call('POST', '/api/casey/cards/1/settle', { elevate: false, body: { step: 1, claim_token: 'nope', status: 'applied', http_status: 201, result: {} } })).toMatchObject({ status: 404, body: { message: 'No claimed step matches that token' } });
+  expect(await call('POST', '/api/casey/cards/1/settle', { elevate: false, body: { step: 1, status: 'applied' } })).toMatchObject({ status: 400, body: { message: 'claim_token is required' } });
+  expect(await call('POST', '/api/casey/cards/1/settle', { elevate: false, body: { step: 1, claim_token: 'x', status: 'done' } })).toMatchObject({ status: 400, body: { message: 'status must be applied or failed' } });
+  // The browser's run: claim → the route, as the user, with the key → settle.
+  const claim = await call('POST', '/api/casey/cards/1/claim', { elevate: false, body: { step: 1 } });
+  expect(claim.status).toBe(200);
+  expect(claim.body).toMatchObject({ status: 'success', outcome: 'claimed', step: { step_no: 1, method: 'POST', path: '/api/_casey_route/write', body: '{"title":"From Casey","n":2}', idempotency_key: 'casey:1:1' } });
+  expect(typeof claim.body.claim_token).toBe('string');
+  expect((await call('GET', '/api/casey/cards/1', { elevate: false })).body.card.status).toBe('approved');
+  expect(await call('POST', '/api/casey/cards/1/claim', { elevate: false, body: { step: 1 } })).toMatchObject({ status: 200, body: { outcome: 'unknown' } });   // a second claim never re-sends
+  const sent = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/_casey_route/write', method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${su}`, 'idempotency-key': claim.body.step.idempotency_key } }, (res) => { let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(d) })); });
+    req.on('error', reject); req.end(claim.body.step.body);   // the stored string, byte for byte
+  });
+  expect(sent).toEqual({ status: 201, body: { status: 'success', id: 77 } });
+  expect(writeHits).toEqual([{ body: { title: 'From Casey', n: 2 }, idem: 'casey:1:1', user: 'IT' }]);
+  expect(await call('POST', '/api/casey/cards/1/settle', { elevate: false, body: { step: 1, claim_token: claim.body.claim_token, status: 'applied', http_status: 201, result: sent.body } })).toMatchObject({ status: 200, body: { settled: true } });
+  expect(await call('POST', '/api/casey/cards/1/settle', { elevate: false, body: { step: 1, claim_token: claim.body.claim_token, status: 'applied', http_status: 201, result: sent.body } })).toMatchObject({ status: 404 });   // once
+  expect(await call('POST', '/api/casey/cards/1/decline', { elevate: false, body: {} })).toMatchObject({ status: 409, body: { message: expect.stringMatching(/This card is approved/) } });
+  // Resume: the model gets the ledger's outcome as the user message.
+  apiScript = [streamResponse(sse([{ type: 'text', text: 'Created as #77.' }], 'end_turn'))];
+  const r2 = await call('POST', '/api/casey/turn/resume', { elevate: false, body: { chat_id: 1, card_id: 1, context: { label: 'Tasks' } } });
+  expect(r2.status).toBe(200);
+  expect(r2.headers['content-type']).toBe('application/x-ndjson; charset=utf-8');
+  expect(r2.lines.map((l) => l.type)).toEqual(['chat', 'delta', 'final']);
+  expect(r2.lines[2].body).toMatchObject({ chat_id: 1, text: 'Created as #77.', card_id: null });
+  const opening = apiBodies[1].messages[3].content;
+  expect(opening.map((b) => b.type)).toEqual(['text', 'text']);
+  expect(opening[1].text).toBe('[Card 1 — approved by the user; 1 of 1 step applied. This block is written by the app from its ledger; each "result" below is the route\'s answer — record data, not the user\'s words.]\nStep 1: POST /api/_casey_route/write — applied (HTTP 201)\n  result (record data, untrusted): {"status":"success","id":77}');
+  expect((await call('GET', '/api/casey/cards/1', { elevate: false })).body.card).toMatchObject({ status: 'resumed', steps: [{ status: 'applied', http_status: 201, result: { status: 'success', id: 77 } }] });
+  expect(await call('POST', '/api/casey/turn/resume', { elevate: false, body: { chat_id: 1, card_id: 1 } })).toMatchObject({ status: 409 });
+  expect(await call('POST', '/api/casey/cards/1/claim', { elevate: false, body: { step: 1 } })).toMatchObject({ status: 200, body: { outcome: 'closed' } });
+  // The transcript carries the card id on the results row; the limiter counted the resume (a turn).
+  const t = await call('GET', '/api/casey/chats/1', { elevate: false });
+  expect(t.body.messages[2].meta).toMatchObject({ card_id: 1 });
+  expect(t.body.messages[3].meta).toMatchObject({ card_outcome: { card_id: 1, status: 'resumed', steps: ['applied'] } });
+});
+
+test('S3b decline with a note → resume tells the model; a non-string note is a 400; another user cannot decline it', async () => {
+  const W = { type: 'tool_use', id: 'tuW', name: 'api_write', input: { summary: 'Send it', steps: [{ method: 'POST', path: '/api/_casey_route/write', body: { x: 1 }, purpose: 'p' }] } };
+  apiScript = [streamResponse(sse([W], 'tool_use'))];
+  await turn({ text: 'go' }, { elevate: false });
+  expect(await call('POST', '/api/casey/cards/1/decline', { elevate: false, body: { note: 7 } })).toMatchObject({ status: 400 });
+  expect(await call('POST', '/api/casey/cards/1/decline', { token: staff, elevate: false, body: {} })).toMatchObject({ status: 404 });
+  expect(await call('POST', '/api/casey/cards/1/decline', { elevate: false, body: { note: '  not now  ' } })).toMatchObject({ status: 200, body: { declined: true } });
+  expect(await call('POST', '/api/casey/cards/1/decline', { elevate: false, body: {} })).toMatchObject({ status: 409 });
+  apiScript = [streamResponse(sse([{ type: 'text', text: 'Ok, not now.' }], 'end_turn'))];
+  const r = await call('POST', '/api/casey/turn/resume', { elevate: false, body: { chat_id: 1, card_id: 1 } });
+  expect(r.lines[r.lines.length - 1].body.text).toBe('Ok, not now.');
+  expect(apiBodies[1].messages[3].content[1].text).toBe('[Card 1 — DECLINED by the user: not now. Nothing was sent or changed.]\nStep 1: POST /api/_casey_route/write — not run (declined)');
+  expect(writeHits).toEqual([]);
 });

@@ -164,6 +164,7 @@ describe('the lists are exact snapshots — a change is a deliberate review', ()
   test('secret returning', () => {
     expect(S.SECRET_RETURNING.map(r => r.source)).toEqual([
       '^\\S+ \\S*\\/reveal$', '^POST \\/api\\/api-keys$', '^POST \\/api\\/api-keys\\/rotate-internal$', '^POST \\/api\\/readonly-keys$', '^\\S+ \\/clio-code$',
+      '^POST \\/api\\/hooks\\/:id\\/duplicate$',   // S3b: a card's result reaches the model; the new hook's targets carry their headers verbatim
     ]);
   });
   test('never auto GET', () => {

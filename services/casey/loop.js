@@ -50,6 +50,20 @@
 //                                        turn with it) so the retry is a clean retry.
 //   a 400 naming thinking                once: drop the stored thinking blocks and retry
 //                                        (the binding tripped despite the signature)
+//   a CARD (S3b: an api_write in a round) the round's results are stored as usual — the
+//                                        api_write result says "card N proposed" — then
+//                                        the turn ENDS with a `card` line and a final whose
+//                                        text is empty. The browser executes on Approve;
+//                                        the outcome comes back as the FIRST text block of
+//                                        the next user message (cards.outcomeText, built
+//                                        from the ledger): POST /api/casey/turn/resume
+//                                        runs that turn with no user text; a plain turn
+//                                        while a card is still open resolves it first
+//                                        (proposed → declined implicitly) and prepends the
+//                                        outcome to the user's words. So no tool_use ever
+//                                        waits for a result across turns, and no row is
+//                                        edited. One api_write per round: a second in the
+//                                        same round is refused ONE_CARD_PER_ROUND.
 // `limited: true` on the final lets S3 offer "Keep going". A client that
 // disconnects does not stop the turn: it runs to a consistent end and the
 // transcript shows it. The spend cap (services/casey/spend.js) is checked
@@ -61,6 +75,7 @@ const { DateTime } = require('luxon');
 const aiService = require('../aiService');
 const tools = require('./tools');
 const chats = require('./chats');
+const cards = require('./cards');
 const spend = require('./spend');
 const caseyPrompt = require('../../lib/caseyPrompt');
 const { isSuperuser, verifyElevationToken, stepupEnabled } = require('../../lib/auth.superuser');
@@ -103,6 +118,7 @@ const EMPTY_NOTE = '[Casey returned no answer.]';
 const INTERRUPTED_RESULT = JSON.stringify({ ok: false, error: { code: 'INTERRUPTED', message: 'this tool call was interrupted before a result was recorded (the previous turn did not finish); call it again if you still need it' } });
 const BUDGET_STOP_NOTE = '[Casey ran out of tool budget for this turn before answering. Ask it to continue.]';
 const STOPPED_NOTE = '[Stopped by the user.]';
+const ONE_CARD_RESULT = (first) => ({ ok: false, tool: 'api_write', error: { code: 'ONE_CARD_PER_ROUND', message: `only one card per turn: ${first} is the card of this round; propose this one after its outcome` }, ms: 0 });
 // What the page sends as the user's text for "Keep going" on a limited turn.
 const CONTINUE_TEXT = 'Keep going from where you stopped: finish the lookups you had planned and answer.';
 const CONTEXT_MAX = 300;   // the page's own words about where the user is, cut
@@ -213,8 +229,9 @@ const addUsage = (sum, u) => { for (const k of ['input_tokens', 'output_tokens',
  * @param {object} o
  * @param {object} o.ctx        tools.ctxFromRequest(req, 'casey') — the caller's identity
  * @param {number|null} o.chatId  an existing chat of this user, or null for a new one
- * @param {string} o.text       the user's message
- * @param {object} [o.context]  the page's words about where the user is ({label, case_id, contact_id, path}) → the context block's Page line
+ * @param {string} o.text       the user's message (may be blank on a resume — the card's outcome is the message then)
+ * @param {number|null} [o.cardId]  S3b resume: the card of this chat whose outcome opens the turn (approved or declined; 409 otherwise)
+ * @param {object} [o.context]  the page's words about where the user is ({label, case_id, contact_id}) → the context block's Page line
  * @param {Function} o.send     (event) → void, one NDJSON line
  * @param {Function} [o.begin]  called once, before the first event, when the turn is claimed
  * @param {Function} [o.converse]  aiService.converse (injected by tests)
@@ -223,14 +240,15 @@ const addUsage = (sum, u) => { for (const k of ['input_tokens', 'output_tokens',
  * @throws httpError (status 400 / 404 / 409 / 429) BEFORE begin() — the route answers JSON
  */
 async function runTurn(db, {
-  ctx, chatId = null, text, context = null, model = null, send, begin = () => {},
+  ctx, chatId = null, text, context = null, model = null, cardId = null, send, begin = () => {},
   converse = aiService.converse, heartbeatMs = HEARTBEAT_MS,
   maxCalls = MAX_TOOL_CALLS, maxMs = MAX_TURN_MS, maxTokens = MAX_TOKENS, maxTokensRetry = MAX_TOKENS_RETRY,
   now = () => new Date(),
 } = {}) {
   const userText = typeof text === 'string' ? text.trim() : '';
-  if (!userText) throw spend.httpError(400, 'text is required');
+  if (!userText && cardId == null) throw spend.httpError(400, 'text is required');
   if (userText.length > TEXT_MAX) throw spend.httpError(400, `text is longer than ${TEXT_MAX} characters`);
+  if (cardId != null && chatId == null) throw spend.httpError(400, 'a card resume needs its chat_id');
   const auth = ctx && ctx.auth;
   if (!auth || auth.userId == null) throw spend.httpError(401, 'a signed-in user is required');
   const userId = auth.userId;
@@ -256,6 +274,30 @@ async function runTurn(db, {
     chat = await chats.getChat(db, id, userId);
     created = true;
     if (!(await chats.claimTurn(db, chat.id, userId))) throw spend.httpError(409, 'A turn is already running in this chat');
+  }
+  // S3b: the card whose outcome opens this turn. A resume names it (approved or
+  // declined → resumed; anything else is nothing to report, or already reported).
+  // A plain turn while a card is still open resolves it first — a proposed card
+  // is declined implicitly, an approved one stands — so the model always hears
+  // what became of its card before the user's next words.
+  let outcomeCard = null;
+  let outcomePrev = null;   // the card's state before the resume — restored when the turn is rolled back before the model heard it
+  try {
+    if (cardId != null) {
+      const c = await cards.getCard(db, cardId, userId);
+      if (!c || c.chat_id !== chat.id) throw spend.httpError(404, 'No such card in this chat');
+      if (c.status === 'proposed') throw spend.httpError(409, 'Nothing to report yet: approve or decline the card first');
+      if (c.status === 'resumed') throw spend.httpError(409, 'That card\'s outcome was already sent');
+      outcomePrev = { status: c.status, implicit: false };
+      outcomeCard = await cards.resumeCard(db, c.id, userId);
+      if (!outcomeCard) throw spend.httpError(409, 'That card\'s outcome was already sent');
+    } else {
+      const resolved = await cards.resolveForTurn(db, chat.id, userId);   // → { card, prev } or null
+      if (resolved) { outcomeCard = resolved.card; outcomePrev = resolved.prev; }
+    }
+  } catch (e) {
+    await chats.releaseTurn(db, chat.id).catch(() => {});
+    throw e;
   }
 
   const started = Date.now();
@@ -290,8 +332,13 @@ async function runTurn(db, {
     const cb = contextBlock({ auth, headers: ctx.headers, now: now(), context: sanitizeContext(context) });
     const userMessage = { role: 'user', content: [
       ...orphans.map((id) => ({ type: 'tool_result', tool_use_id: id, content: INTERRUPTED_RESULT, is_error: true })),   // repair: results first, then the turn
-      { type: 'text', text: cb.text }, { type: 'text', text: userText }] };
-    const opening = await store('user', userMessage.content, { context: cb.meta, ...(orphans.length ? { repaired_tool_uses: orphans } : {}) });
+      { type: 'text', text: cb.text },
+      ...(outcomeCard ? [{ type: 'text', text: cards.outcomeText(outcomeCard) }] : []),   // S3b: what became of the card, before the user's words
+      ...(userText ? [{ type: 'text', text: userText }] : [])] };
+    const opening = await store('user', userMessage.content, {
+      context: cb.meta, ...(orphans.length ? { repaired_tool_uses: orphans } : {}),
+      ...(outcomeCard ? { card_outcome: { card_id: outcomeCard.id, status: outcomeCard.status, decline_note: outcomeCard.decline_note || null, steps: outcomeCard.steps.map((s) => s.status) } } : {}),
+    });
     if (stripped) { floorSeq = Math.max(floorSeq, opening.seq); floorRaised = true; }   // everything before this turn is unreplayable from now on
     let messages = [...(stripped ? stripThinking(history) : history), userMessage];
 
@@ -355,26 +402,38 @@ async function runTurn(db, {
         }
         await store('assistant', r.content, meta);
         messages.push({ role: 'assistant', content: r.content });
+        const firstWrite = toolUses.find((b) => b.name === 'api_write' && !(r.partial.length && r.partial.includes(r.content.indexOf(b)))) || null;   // S3b: one card per round — the first api_write that arrived whole
         const results = await Promise.all(toolUses.map(async (b) => {
           send({ type: 'tool_call', id: b.id, name: b.name, input: b.input });
           const env = r.partial.length && r.partial.includes(r.content.indexOf(b))
             ? { ok: false, tool: b.name, error: { code: 'BAD_INPUT', message: 'the tool call\'s input did not arrive whole' }, ms: 0 }
-            : await tools.runTool(b.name, toolCtx, b.input);
+            : (b.name === 'api_write' && b !== firstWrite) ? ONE_CARD_RESULT(firstWrite.id)
+            : await tools.runTool(b.name, { ...toolCtx, card: { chatId: chat.id, toolUseId: b.id } }, b.input);
           const summary = { id: b.id, name: b.name, ok: env.ok, code: env.ok ? null : (env.error && env.error.code) || null, bytes: env.bytes ?? null, ms: env.ms, truncated: !!env.truncated };
           send({ type: 'tool_result', ...summary });          // as each finishes
-          return { block: toolResultBlock(b.id, env), summary };
+          return { block: toolResultBlock(b.id, env), summary, env };
         }));
         calls += toolUses.length;
         const content = results.map((x) => x.block);          // the model's order, whatever finished first
         toolCalls.push(...results.map((x) => x.summary));
         const umeta = { tool_calls: results.map((x) => x.summary) };
+        const proposed = firstWrite ? results.find((x) => x.summary.id === firstWrite.id) : null;
+        const newCardId = proposed && proposed.env.ok && proposed.env.data && proposed.env.data.card_id ? proposed.env.data.card_id : null;
+        if (newCardId) umeta.card_id = newCardId;
         if (calls >= maxCalls || Date.now() - started >= maxMs) {
           budgetSpent = true; limited = true;   // whatever the model answers next, it answered under the budget note
-          content.push({ type: 'text', text: BUDGET_NOTE(calls, elapsedS()) });
-          umeta.budget_note = true;
+          if (!newCardId) { content.push({ type: 'text', text: BUDGET_NOTE(calls, elapsedS()) }); umeta.budget_note = true; }   // a card ends the turn anyway; the outcome message is the next prompt
         }
-        await store('user', content, umeta);
+        const row = await store('user', content, umeta);
         messages.push({ role: 'user', content });
+        if (newCardId) {
+          // The turn ends on the card: the browser takes over (Approve runs the
+          // steps as the user; Decline / Resume bring the outcome back as the next
+          // user message). Nothing more is asked of the model now.
+          const card = cards.present(await cards.getCard(db, newCardId, userId));
+          send({ type: 'card', card });
+          return finish(row, '', { card_id: newCardId });
+        }
         continue;
       }
       // end_turn, or any other stop with no tool call: the answer. An empty block
@@ -399,7 +458,7 @@ async function runTurn(db, {
   function finish(row, answerText, extra = {}) {
     const body = {
       chat_id: chat.id, message_id: row.id, seq: row.seq, text: answerText, usage, cost_cents: Math.round(cost * 10000) / 10000,
-      calls, tool_calls: toolCalls, limited, stopped: false, ms: Date.now() - started, model: chat.model, effort: chat.effort, prompt_version: sig, ...extra,
+      calls, tool_calls: toolCalls, limited, stopped: false, card_id: null, ms: Date.now() - started, model: chat.model, effort: chat.effort, prompt_version: sig, ...extra,
     };
     send({ type: 'final', body });
     return { ok: true, final: body };
@@ -408,10 +467,11 @@ async function runTurn(db, {
   // A failure with only the opening user row stored (or none, and a chat this
   // turn created): remove it, and the chat with it, so a retry is clean.
   async function rollbackIfOpening(result) {
-    if (stored.length === 1 || (stored.length === 0 && created)) {
+    if (stored.length <= 1 && (stored.length === 1 || created || outcomeCard)) {
       try {
         if (created) await chats.deleteChat(db, chat.id, userId);
-        else await chats.deleteMessages(db, chat.id, stored);
+        else if (stored.length) await chats.deleteMessages(db, chat.id, stored);
+        if (outcomeCard) await cards.revertResume(db, outcomeCard.id, userId, outcomePrev);   // the model never heard it: the card is open again (also when the turn died before its first store — review S6)
         result.rolled_back = true;
       } catch (e) { console.error('[casey loop] rollback failed:', e.message); }
     }
@@ -422,5 +482,5 @@ async function runTurn(db, {
 module.exports = {
   runTurn, contextBlock, pageLine, sanitizeContext, stripThinking, orphanToolUses, settingModel, settingModels, settingModelNotes, modelMenu, settingEffort,
   MODELS, MODEL_LABELS, NOTE_MAX, DEFAULT_MODEL, EFFORTS, DEFAULT_EFFORT, MAX_TOOL_CALLS, MAX_TURN_MS, MAX_TOKENS, MAX_TOKENS_RETRY, HEARTBEAT_MS, CALL_TIMEOUT_FLOOR_MS, TEXT_MAX, PROMPT_KEY,
-  BUDGET_NOTE, CUT_NOTE, DECLINED_NOTE, BUDGET_STOP_NOTE, EMPTY_NOTE, STOPPED_NOTE, CONTINUE_TEXT, CONTEXT_MAX, INTERRUPTED_RESULT, FIRM_TZ,
+  BUDGET_NOTE, CUT_NOTE, DECLINED_NOTE, BUDGET_STOP_NOTE, EMPTY_NOTE, STOPPED_NOTE, CONTINUE_TEXT, CONTEXT_MAX, INTERRUPTED_RESULT, ONE_CARD_RESULT, FIRM_TZ,
 };
