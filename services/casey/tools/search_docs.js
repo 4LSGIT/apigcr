@@ -1,7 +1,7 @@
-// search_docs — the shipped manual, as v1 reads it (services/assistantKnowledgeService).
+// search_docs — the shipped manual (services/casey/knowledge.js, v1's index moved here at S6).
 'use strict';
 
-const knowledge = require('../../assistantKnowledgeService');
+const knowledge = require('../knowledge');
 
 module.exports = {
   name: 'search_docs',

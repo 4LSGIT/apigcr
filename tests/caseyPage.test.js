@@ -37,7 +37,7 @@ function ndjson(events) {
  *  the store would (in order, a token per claim); `resume` scripts POST /api/casey/turn/resume; `routes` answers a card step's own
  *  request (path → value, or a function; a thrown {status, body} is the route's error). */
 const MENU = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', hint: 'deeper', default: false }, { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'fast', default: true }, { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'dearest', default: false }];
-async function pane({ url = 'https://app.test/casey.html', review = null, reports = [], boot = { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'Keep going from where you stopped.', models: MENU }, chats = [], transcripts = {}, turn = null, context = null, cardsApi = {}, resume = null, routes = {}, claimOverride = {} } = {}) {
+async function pane({ url = 'https://app.test/casey.html', review = null, reports = [], boot = { status: 'success', model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'Keep going from where you stopped.', models: MENU }, chats = [], transcripts = {}, turn = null, context = null, cardsApi = {}, resume = null, routes = {}, claimOverride = {} } = {}) {
   const dom = new JSDOM(HTML.replace('<script src="/themeSync.js"></script>', ''), { runScripts: 'outside-only', url, pretendToBeVisual: true });
   const w = dom.window;
   const calls = [];
@@ -45,7 +45,7 @@ async function pane({ url = 'https://app.test/casey.html', review = null, report
   w.__parent = {
     apiSend: async (p, method = 'GET', body, headers, opts) => {
       calls.push({ p, method, body, headers, opts });
-      if (p === '/api/casey/boot') return boot;
+      if (p === '/api/casey/boot') { if (boot instanceof Error) throw boot; return boot; }
       if (/^\/api\/casey\/review\/\d+$/.test(p) && method === 'GET') { if (!review) { const e = new Error('No such chat'); e.status = 404; throw e; } return review; }   // S4b: the superuser's read
       if (p === '/api/issue-reports' && method === 'POST') { reports.push(body); if (body && body.note === 'FAIL') { const e = new Error('Too many reports'); e.status = 429; throw e; } return { id: 40 + reports.length, emailed: body && body.note !== 'NOMAIL' }; }   // S4b: the flag
       let m;
@@ -107,9 +107,16 @@ test('boot: the chip shows the model, the chat list fills, the composer is live;
   expect(p.E('stop').hidden).toBe(true);
   expect(p.E('delChat').hidden).toBe(true);
   expect(p.calls.map((c) => c.p)).toEqual(['/api/casey/boot', '/api/casey/chats']);
-  const dark = await pane({ boot: { status: 'success', enabled: false } });
-  expect(dark.E('send').disabled).toBe(true);
-  expect(dark.E('log').textContent).toMatch(/Casey v2 is off/);
+  const down = await pane({ boot: { status: 'error', message: 'nope' } });   // S6: no switch — a failed boot is the only closed state
+  expect(down.E('send').disabled).toBe(true);
+  expect(down.E('log').textContent).toMatch(/Casey could not start/);
+  // the route's own refusal (apiSend throws with the status and the route's message) is shown; a network failure (no status) gets the generic line
+  const viewAs = await pane({ boot: Object.assign(new Error('Casey is not available in a View-as session.'), { status: 403 }) });
+  expect(viewAs.E('send').disabled).toBe(true);
+  expect(viewAs.E('log').textContent).toMatch(/Casey could not start\.Casey is not available in a View-as session\./);
+  const offline = await pane({ boot: new Error('Failed to fetch') });
+  expect(offline.E('log').textContent).toMatch(/The boot request failed — reload the page/);
+  expect(offline.E('log').textContent).not.toMatch(/Failed to fetch/);
 });
 
 test('a stored transcript renders: the context block hidden, tool_use + tool_result paired into trail rows, markdown answers with the cost', async () => {
@@ -168,12 +175,12 @@ test('S3a-2 the model picker: shown for a new chat with the menu and the default
   expect(mp.hidden).toBe(true); expect(chip.hidden).toBe(false); expect(chip.textContent).toBe('Fable 5.1');
   p.E('newChat').click(); await p.tick();              // a new chat: the picker is back at the DEFAULT, not the last pick
   expect(mp.hidden).toBe(false); expect(chip.hidden).toBe(true); expect(mp.value).toBe('claude-sonnet-5-5');
-  const one = await pane({ boot: { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [{ ...MENU[1], hint: '' }] }, turn: scripted });
+  const one = await pane({ boot: { status: 'success', model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [{ ...MENU[1], hint: '' }] }, turn: scripted });
   expect(one.E('modelPick').hidden).toBe(true); expect(one.E('modelChip').hidden).toBe(false); expect(one.E('modelChip').textContent).toBe('Sonnet 5.5');
   expect(one.E('modelPick').options[0].textContent).toBe('Sonnet 5.5'); expect(one.E('modelPick').options[0].title).toBe('');   // no note: the label alone
   one.E('text').value = 'q'; one.E('send').click(); await new Promise((r) => setTimeout(r, 200));
   expect(bodies[2]).toEqual({ text: 'q' });   // one model: no choice shown, nothing sent — the server's CURRENT default decides, so a menu change never strands this pane
-  const none = await pane({ boot: { status: 'success', enabled: true, model: 'm', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k' }, turn: scripted });
+  const none = await pane({ boot: { status: 'success', model: 'm', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k' }, turn: scripted });
   expect(none.E('modelPick').hidden).toBe(true); expect(none.E('modelChip').hidden).toBe(false);
   none.E('text').value = 'q'; none.E('send').click(); await new Promise((r) => setTimeout(r, 200));
   expect(bodies[3]).toEqual({ text: 'q' });
@@ -203,8 +210,8 @@ test('S3a-2 the picker after failures: a 404 on open → a new chat at the defau
   expect(bodies[1]).toEqual({ text: 'again', model: 'claude-opus-5-5' });
   let boots = 0;
   // The pane booted with Opus preselected; the firm then narrowed the menu to Sonnet alone.
-  const wide = { status: 'success', enabled: true, model: 'claude-opus-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [{ ...MENU[0], default: true }, { ...MENU[1], default: false }, MENU[2]] };
-  const narrow = { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [MENU[1]] };
+  const wide = { status: 'success', model: 'claude-opus-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [{ ...MENU[0], default: true }, { ...MENU[1], default: false }, MENU[2]] };
+  const narrow = { status: 'success', model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [MENU[1]] };
   const r = await pane({ boot: wide, chats: [], turn: () => { const e = new Error('That model is not on the menu'); e.status = 400; throw e; } });
   expect(r.E('modelChip').textContent).toBe('Opus 5.5');
   const orig2 = r.w.__parent.apiSend;
@@ -367,7 +374,7 @@ test('S1: a ?ask= draft the shell holds is taken into the composer at boot', asy
     const jsdom = require('jsdom');
     const w = new jsdom.JSDOM(HTML.replace('<script src="/themeSync.js"></script>', ''), { runScripts: 'outside-only', url: 'https://app.test/casey.html' }).window;
     w.TextDecoder = TextDecoder; w.ReadableStream = ReadableStream;
-    w.__parent = { apiSend: async (path) => { calls.push(path); if (path === '/api/casey/boot') return { status: 'success', enabled: true, model: 'm', effort: 'medium', limits: { text_max: 20 } }; return { status: 'success', chats: [] }; }, ycTakeAssistantDraft: () => 'Which 341 meetings are next week, and where?' };
+    w.__parent = { apiSend: async (path) => { calls.push(path); if (path === '/api/casey/boot') return { status: 'success', model: 'm', effort: 'medium', limits: { text_max: 20 } }; return { status: 'success', chats: [] }; }, ycTakeAssistantDraft: () => 'Which 341 meetings are next week, and where?' };
     w.eval(PATCHED); await new Promise((res) => setTimeout(res, 150)); return w;
   })();
   expect(r.document.getElementById('text').value).toBe('Which 341 meetings a');   // cut to the boot's text_max (20)

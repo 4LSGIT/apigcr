@@ -21,7 +21,6 @@ const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const emailSvc     = require('../services/contactEmailService');
 const optout       = require('../services/optoutService');
-const ledger       = require('../services/assistantActionLedger');
 const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 
 
@@ -71,15 +70,6 @@ function parseBool(v) {
   return false;
 }
 
-/**
- * Consent evidence for a write a Casey card is applying (YisraMail P1): the
- * card sends its draft_id as `casey_draft_id`; it counts only while it is
- * this user's in-flight claim of a contact.email kind. Attribution, never a
- * permission — anything else is a plain staff write.
- */
-async function caseyEvidence(req, draftId, kinds) {
-  return ledger.attribution(req.db, req.auth && req.auth.userId, draftId, kinds);
-}
 
 
 // ─── GET /api/contacts/:id/emails ───
@@ -119,19 +109,17 @@ router.post('/api/contact-emails', jwtOrApiKey, async (req, res) => {
   try {
     const createdBy = resolveCreatedBy(req);
     const force     = parseBool(req.query.force);
-    const { contact_id, expected_primary_id, casey_draft_id, ...fields } = req.body || {};
+    const { contact_id, expected_primary_id, ...fields } = req.body || {};
 
     if (!contact_id) {
       return res.status(400).json({ status: 'error', message: 'contact_id is required' });
     }
 
-    const consentEvidence = await caseyEvidence(req, casey_draft_id, ['contact.email.create.v1']);
-
     // Optional `Idempotency-Key` header: a repeat of the same key replays the
     // first create's response instead of inserting a second row. Header only —
     // nothing in the body can set it (lib/requestIdempotency.js).
     const { value: result, replayed } = await idempotentRequest(req, 'contact_emails.create', () =>
-      emailSvc.createContactEmail(req.db, contact_id, fields, { force, createdBy, expectedPrimaryId: expected_primary_id, consentEvidence,
+      emailSvc.createContactEmail(req.db, contact_id, fields, { force, createdBy, expectedPrimaryId: expected_primary_id,
         consentActor: optout.consentActor(req.auth) })
     );
     res.status(201).json({ status: 'success', ...result, ...(replayed ? { replayed: true } : {}) });
@@ -152,9 +140,8 @@ router.post('/api/contact-emails', jwtOrApiKey, async (req, res) => {
 router.patch('/api/contact-emails/:id', jwtOrApiKey, async (req, res) => {
   try {
     const updatedBy = resolveCreatedBy(req);
-    const { expected_updated_at, expected_primary_id, casey_draft_id, ...fields } = req.body || {};
-    const consentEvidence = await caseyEvidence(req, casey_draft_id, ['contact.email.update.v1', 'contact.email.end.v1']);
-    const result = await emailSvc.updateContactEmail(req.db, req.params.id, fields, { updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id, consentEvidence,
+    const { expected_updated_at, expected_primary_id, ...fields } = req.body || {};
+    const result = await emailSvc.updateContactEmail(req.db, req.params.id, fields, { updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id,
       consentActor: optout.consentActor(req.auth) });
     res.json({ status: 'success', ...result });
   } catch (err) {

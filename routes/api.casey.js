@@ -2,16 +2,16 @@
 //
 // S0: one SU-only inspection read over the route catalog.
 // S1: the tool layer (services/casey/tools) behind an SU-only TEST route —
-//     no model call, nothing user-visible, dark while casey_v2_enabled = '0'.
+//     no model call, nothing user-visible.
 // S2: the loop (services/casey/loop.js) — POST /api/casey/turn streams one
 //     user turn as NDJSON; the chat routes read and delete a user's own
-//     transcripts. SU only in S2 (design §6), dark while casey_v2_enabled = '0'.
+//     transcripts. SU only in S2 (design §6).
 // S3a: the page (public/casey.html). The turn and chat routes open to every
 //     signed-in STAFF user (a JWT; a machine key is refused — the loop acts as
-//     a person) while casey_v2_enabled is on: Fred's ruling 2026-11-22, no
-//     pilot list — "just turn over". The flag is the switch: '0' darkens
-//     them all and the shell loads the v1 pane instead. GET /api/casey/boot
-//     tells the shell and the page which Casey is on; POST /api/casey/turn/stop
+//     a person): Fred's ruling 2026-11-22, no pilot list — "just turn over".
+//     S6 (2026-11-24) retired v1 and the casey_v2_enabled switch with it: this
+//     is the only Casey. GET /api/casey/boot gives the page its settings and
+//     limits; POST /api/casey/turn/stop
 //     marks a running turn to end. The tools / catalog routes stay SU-only.
 // S3b: cards. api_write (services/casey/tools/api_write.js) PROPOSES writes;
 //     the turn ends with a `card` line; the page runs the steps as the user
@@ -29,8 +29,7 @@
 // S4a: Casey Notes (services/casey/notes.js) — the pitfalls document the firm
 //     edits to steer Casey without a deploy. Gated by the system.settings
 //     capability (IT and superusers), the same person-only requireAuth the
-//     settings pages use; NOT darkened by the flag (notes are configuration an
-//     admin may prepare while v2 is off). Every /api/casey route is never
+//     settings pages use (configuration). Every /api/casey route is never
 //     proposable, so Casey cannot write its own instructions.
 //
 //   GET  /api/casey/notes                       → { scopes:[current row per scope], families:[…], caps }
@@ -41,14 +40,12 @@
 //
 //   GET /api/casey/catalog?family=&class=&tier=&method=&q=&unknown=1
 //     → { status:'success', summary, filters, rows:[...], unknown:[...] }
-//   GET  /api/casey/tools            → { status, enabled, tools:[{name, description, input_schema}] }
+//   GET  /api/casey/tools            → { status, tools:[{name, description, input_schema}] }
 //   POST /api/casey/tools/:name {input}
 //     → the tool's envelope (services/casey/tools/index.js), run AS THE CALLER:
 //       ctx comes from this request (its auth, headers, app, ip), so a tool
-//       sees exactly what the superuser testing it may see. 403 when
-//       casey_v2_enabled is '0' (lib/firmConfig; on unless '0', like every
-//       casey_* switch — Fred seeds '0' before the deploy so v2 starts dark),
-//       404 for an unknown tool name, 400 for a non-object input.
+//       sees exactly what the superuser testing it may see. 404 for an
+//       unknown tool name, 400 for a non-object input.
 //   POST /api/casey/turn {chat_id?, text, context?, model?}
 //     model (S3a-2): the user's pick for a NEW chat, one of boot.models; 400 off
 //     the menu, 400 with a chat_id (an open chat keeps its model).
@@ -65,7 +62,7 @@
 //                            calls, tool_calls, limited, card_id, ms, model, effort, prompt_version}}
 //       {type:'error', status, message, detail?}  — a failure after the stream began
 //     Before the stream begins the answer is plain JSON: 400 (text missing /
-//     > 4,000 chars / bad chat_id), 403 (dark), 404 (not this user's chat),
+//     > 4,000 chars / bad chat_id), 404 (not this user's chat),
 //     409 (a turn is running in that chat), 429 (the firm's monthly AI cap).
 //     Cache-Control: no-transform keeps compression() from buffering it.
 //   GET    /api/casey/chats                → { status, chats:[{id, title, model, effort, …, message_count}] }
@@ -101,10 +98,6 @@ const guard = superuserOnlyFor('casey');
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const requireAuth = require('../lib/auth.requireAuth');   // S4a: the notes routes' capability gate
 
-function v2Enabled() {
-  return require('../lib/firmConfig').cfg('casey_v2_enabled') !== '0'; // lazy require (convention)
-}
-
 // S3a: a signed-in staff PERSON (v1's staffOnly, same words) — the loop runs
 // every tool as the caller, and a machine key is not someone to act as.
 function staffOnly(req, res, next) {
@@ -114,26 +107,18 @@ function staffOnly(req, res, next) {
 // A View-as session (lib/auth.impersonation: the JWT carries viewAs /
 // impersonator) is refused on every v2 route, reads included: a transcript is
 // private to its user (a superuser reads it only through the S4b review routes, with the elevation step-up), and a View-as
-// read would be another person reading it. v1's pane allows the read; v2
-// does not (S3a review; Fred may relax it — it is one line).
+// read would be another person reading it (S3a review; v1's pane allowed it;
+// Fred may relax it — it is one line).
 function notViewAs(res, auth) {
   if (!(auth && (auth.viewAs || auth.impersonator))) return false;
   res.status(403).json({ status: 'error', message: 'Casey is not available in a View-as session.' });
   return true;
 }
 // One user's turns per hour (v1's execute limit; keyed u<userId>, in-process
-// like every makeLimiter): the firm's monthly cap is shared with v1, so one
+// like every makeLimiter): the firm's monthly cap is one cap, so one
 // runaway client must not be able to spend it. Checked in the handler, not as
 // a gate name.
 const turnLimited = require('../lib/rateLimiter').makeLimiter(60 * 60 * 1000, 60);
-// The flag is checked INSIDE each handler (dark()), not as a middleware: a
-// route-local gate is a NAME lib/routeCatalog.js must know, and a flag check
-// is not an auth claim.
-function dark(res) {
-  if (v2Enabled()) return false;
-  res.status(403).json({ status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' });
-  return true;
-}
 const staff = [jwtOrApiKey, staffOnly];
 const SETTLE_RESULT_MAX = 256 * 1024;   // bytes of a settle's `result` (the page trims a route's answer to this before posting)
 
@@ -176,14 +161,11 @@ router.get('/api/casey/catalog', ...guard, (req, res) => {
 // ── S1: tool layer test route ─────────────────────────────────────────────
 router.get('/api/casey/tools', ...guard, (req, res) => {
   const tools = require('../services/casey/tools'); // lazy require (convention)
-  res.json({ status: 'success', enabled: v2Enabled(), tools: tools.definitions() });
+  res.json({ status: 'success', tools: tools.definitions() });
 });
 
 router.post('/api/casey/tools/:name', ...guard, async (req, res) => {
   try {
-    if (!v2Enabled()) {
-      return res.status(403).json({ status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' });
-    }
     const tools = require('../services/casey/tools'); // lazy require (convention)
     const input = req.body && req.body.input;
     if (input !== undefined && (input === null || typeof input !== 'object' || Array.isArray(input))) {
@@ -217,7 +199,7 @@ router.get('/api/casey/boot', ...staff, (req, res) => {
   if (notViewAs(res, req.auth)) return;
   const loop = require('../services/casey/loop');   // lazy require (convention)
   res.json({
-    status: 'success', enabled: v2Enabled(), model: loop.settingModel(), effort: loop.settingEffort(),
+    status: 'success', model: loop.settingModel(), effort: loop.settingEffort(),
     models: loop.modelMenu(),   // the menu for a new chat (S3a-2): [{id, label, hint, default}]
     limits: { text_max: loop.TEXT_MAX, max_tool_calls: loop.MAX_TOOL_CALLS, max_turn_ms: loop.MAX_TURN_MS, max_chat_chars: loop.MAX_CHAT_CHARS },
     continue_text: loop.CONTINUE_TEXT,
@@ -226,7 +208,7 @@ router.get('/api/casey/boot', ...staff, (req, res) => {
 
 /** Validate the shared turn body and stream one turn (POST /turn and /turn/resume). `extra` adds to the loop's options after validation. */
 async function streamTurn(req, res, { resume = false } = {}) {
-  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (notViewAs(res, req.auth)) return;
   if (turnLimited(`u${req.auth.userId}`)) {
     return res.status(429).json({ status: 'error', message: 'You have asked Casey a lot of questions this hour. Try again later.' });
   }
@@ -302,9 +284,9 @@ router.post('/api/casey/turn/resume', ...staff, (req, res) => streamTurn(req, re
 // ── S3b: cards ───────────────────────────────────────────────────────────
 // The browser's side of the ledger (services/casey/cards.js): read the card,
 // claim a step before sending its request, settle it after, or decline. All
-// scoped to the caller's own cards; dark with the flag.
+// scoped to the caller's own cards.
 router.get('/api/casey/cards/:id', ...staff, async (req, res) => {
-  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (notViewAs(res, req.auth)) return;
   try {
     const cards = require('../services/casey/cards'); // lazy require (convention)
     const id = chatIdParam(req.params.id);
@@ -318,7 +300,7 @@ router.get('/api/casey/cards/:id', ...staff, async (req, res) => {
 });
 
 router.post('/api/casey/cards/:id/claim', ...staff, async (req, res) => {
-  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (notViewAs(res, req.auth)) return;
   try {
     const cards = require('../services/casey/cards'); // lazy require (convention)
     const id = chatIdParam(req.params.id);
@@ -338,7 +320,7 @@ router.post('/api/casey/cards/:id/claim', ...staff, async (req, res) => {
 });
 
 router.post('/api/casey/cards/:id/settle', ...staff, async (req, res) => {
-  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (notViewAs(res, req.auth)) return;
   try {
     const cards = require('../services/casey/cards'); // lazy require (convention)
     const id = chatIdParam(req.params.id);
@@ -362,7 +344,7 @@ router.post('/api/casey/cards/:id/settle', ...staff, async (req, res) => {
 });
 
 router.post('/api/casey/cards/:id/decline', ...staff, async (req, res) => {
-  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (notViewAs(res, req.auth)) return;
   try {
     const cards = require('../services/casey/cards'); // lazy require (convention)
     const id = chatIdParam(req.params.id);
@@ -382,7 +364,7 @@ router.post('/api/casey/cards/:id/decline', ...staff, async (req, res) => {
 
 // The page's Stop: marks the running turn; the loop ends it before its next model call.
 router.post('/api/casey/turn/stop', ...staff, async (req, res) => {
-  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (notViewAs(res, req.auth)) return;
   try {
     const chats = require('../services/casey/chats'); // lazy require (convention)
     const id = chatIdParam(req.body && req.body.chat_id);
@@ -398,7 +380,7 @@ router.post('/api/casey/turn/stop', ...staff, async (req, res) => {
 });
 
 router.get('/api/casey/chats', ...staff, async (req, res) => {
-  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (notViewAs(res, req.auth)) return;
   try {
     const chats = require('../services/casey/chats'); // lazy require (convention)
     const rows = await chats.listChats(req.db, req.auth.userId, req.query && req.query.limit);
@@ -410,7 +392,7 @@ router.get('/api/casey/chats', ...staff, async (req, res) => {
 });
 
 router.get('/api/casey/chats/:id', ...staff, async (req, res) => {
-  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (notViewAs(res, req.auth)) return;
   try {
     const chats = require('../services/casey/chats'); // lazy require (convention)
     const id = chatIdParam(req.params.id);
@@ -425,7 +407,7 @@ router.get('/api/casey/chats/:id', ...staff, async (req, res) => {
 });
 
 router.delete('/api/casey/chats/:id', ...staff, async (req, res) => {
-  if (dark(res) || notViewAs(res, req.auth)) return;
+  if (notViewAs(res, req.auth)) return;
   try {
     const chats = require('../services/casey/chats'); // lazy require (convention)
     const id = chatIdParam(req.params.id);
@@ -445,8 +427,7 @@ router.delete('/api/casey/chats/:id', ...staff, async (req, res) => {
 // here; the manual says so to staff). The gate is the SU casey guard (JWT +
 // su + a live elevation, as the catalog and tools routes): a password step-up
 // before another person's transcript is read, and a catalog class of su / T3
-// with no new gate name. Not darkened by the flag (an investigation does not
-// wait for v2 to be on). Never a View-as session.
+// with no new gate name. Never a View-as session.
 //   GET /api/casey/review?user=&q=&flagged=1&before=&limit=  → { status, chats:[…] } (services/casey/chats.listForReview)
 //   GET /api/casey/review/:id                                → { status, chat, messages, cards, flags } — every stored block, the
 //                                                              thinking blocks included (nothing stripped: the record as the model saw it),

@@ -1,21 +1,21 @@
-// tests/caseyChecklistOrder.mysql.test.js
+// tests/checklistsItemsOrder.mysql.test.js
 //
 /**
- * A10X on REAL MySQL: the atomic reorder route PUT /checklists/:id/items/order
- * (routes/api.checklists.js — real handler, real pool, production sql_mode),
- * the Casey reorder card's own reads (checklist.items.reorder.v1) and the
- * browser's click-time re-read (extracted from public/assistant.html) over the
- * REAL GET payload.
+ * The atomic reorder route PUT /checklists/:id/items/order on REAL MySQL
+ * (routes/api.checklists.js — real handler, real pool, production sql_mode).
+ * Ported at Casey v2 S6 (2026-11-24) from the retired v1 suite
+ * caseyChecklistOrder.mysql.test.js, whose card half went with v1: these are
+ * the ROUTE's cases, which no other suite exercised (tests/ycSync.test.js
+ * knows only the matcher).
  *
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
- *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3378/yc_a10x_test npx jest tests/caseyChecklistOrder.mysql.test.js --runInBand
+ *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3379/yc_checklists_order_test npx jest tests/checklistsItemsOrder.mysql.test.js --runInBand
  * The database name must end in _test; this suite DROPS and recreates its
  * tables in it, cloned from ref/database.sql (live types and keys, the real
  * checkitems → checklists FK — the lock the route relies on rides on it).
  * Drops run with FOREIGN_KEY_CHECKS off in the before-hook AND the after-hook
- * and take any sibling-built child of ours with them (the caseyChecklists.mysql
- * hygiene). It shares table names with the other checklist twins: give it its
- * own _test DB or run it --runInBand after them, never concurrently.
+ * and take any sibling-built child of ours with them. It shares table names
+ * with the other checklist twins: give it its own _test DB.
  *
  * WHAT IS LOCKED
  *   - THE ROUTE WRITES THE ORDER: positions 1..N in the sent order, the answer
@@ -29,9 +29,6 @@
  *     (409) — it never answers 200 for a set that no longer is the list's.
  *     Bounded waits only.
  *   - Two reorders racing end in exactly one of the two orders, never a mix.
- *   - The card's expected order is the real GET's; the browser's re-read passes
- *     on a fresh card, refuses after a hand reorder and after an item add, and
- *     the card's request lands exactly the reviewed order.
  */
 'use strict';
 
@@ -47,7 +44,6 @@ jest.mock('../services/emailService', () => ({ sendEmail: jest.fn(async () => {}
 jest.mock('../services/logService', () => ({ createLogEntry: jest.fn(async () => {}) }));
 jest.mock('../services/uploadTargetService', () => ({ issueClientUploadLink: jest.fn(), inspectUploadDestination: jest.fn(), raiseUnsortedUploadTask: jest.fn() }));
 const domainEvents = require('../lib/domainEvents');
-const { normalizeActionDraft } = require('../services/assistantService');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
@@ -94,29 +90,11 @@ function call(app, method, urlPath, body) {
   });
 }
 
-// The browser's reorder functions, extracted verbatim from the page by name
 // and run against an `api` that calls the real routes.
-function fnSrc(html, name) {
-  const m = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(html);
-  if (!m) throw new Error(`${name} not found`);
-  let depth = 0;
-  for (let i = html.indexOf('{', html.indexOf(')', m.index)); i < html.length; i++) {
-    if (html[i] === '{') depth++;
-    else if (html[i] === '}' && --depth === 0) return html.slice(m.index, i + 1);
-  }
-  throw new Error(`${name} unbalanced`);
-}
-function browserReorder(api) {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'assistant.html'), 'utf8');
-  const names = ['checklistEditListId', 'checklistReorderRequest', 'checklistReorderPrecheck', 'checklistReorderResult', 'checklistParentPrecheck', 'checklistParentLabel'];
-  const src = `${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { checklistReorderRequest, checklistReorderPrecheck, checklistReorderResult };`;
-  return new Function('api', src)(api); // eslint-disable-line no-new-func
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-d('the atomic reorder route and the Casey reorder card on real MySQL (A10X)', () => {
-  let pool; let app; let browser;
+d('the atomic reorder route PUT /checklists/:id/items/order on real MySQL (A10X; ported at S6)', () => {
+  let pool; let app;
   const q = async (sql, p) => (await pool.query(sql, p))[0];
   const C1 = 'A10XCASE';
 
@@ -149,8 +127,6 @@ d('the atomic reorder route and the Casey reorder card on real MySQL (A10X)', ()
   const items = async (id) => (await q('SELECT id, name, status, position FROM checkitems WHERE checklist_id = ? ORDER BY position, id', [id]));
   const order = async (id) => (await items(id)).map((i) => Number(i.id));
   const positions = async (id) => (await q('SELECT id, position FROM checkitems WHERE checklist_id = ? ORDER BY id', [id])).map((r) => [Number(r.id), r.position]);
-  const ev = [{ id: 'q1', rows: [{ checklist_id: 41 }, { checklist_id: 42 }, { checklist_id: 43 }] }];
-  const card = (value) => normalizeActionDraft(pool, { kind: 'checklist.items.reorder.v1', evidence: [{ query_id: 'q1', row_number: 1 }], ...value }, ev, { currentUserId: 6 });
 
   beforeAll(async () => {
     const dbName = new URL(URL_).pathname.slice(1);
@@ -175,11 +151,6 @@ d('the atomic reorder route and the Casey reorder card on real MySQL (A10X)', ()
     app.use(express.json());
     app.use((req, _res, next) => { req.db = pool; next(); });
     app.use(require('../routes/api.checklists'));
-    browser = browserReorder(async (p, body, method) => {
-      const res = await call(app, method, p, method === 'GET' ? undefined : body);
-      if (res.status >= 400) throw Object.assign(new Error(res.body.message || `HTTP ${res.status}`), { status: res.status, body: res.body });
-      return res.body;
-    });
   });
 
   afterAll(async () => {
@@ -265,36 +236,4 @@ d('the atomic reorder route and the Casey reorder card on real MySQL (A10X)', ()
     }
   });
 
-  test('THE CARD over the real rows: expected order = the real GET\'s; the re-read passes fresh, refuses after a hand reorder or an add; the request lands the reviewed order', async () => {
-    const c = await card({ checklist_id: 41, item_ids: [403, 404, 401, 402] });
-    expect([c.expected.order, c.moved, c.order_after.map((i) => i.name)]).toEqual([[401, 402, 403, 404], 4,
-      ['Pay stubs', 'Bank statements', 'Pull credit report', 'Order transcripts']]);
-    expect(await browser.checklistReorderPrecheck(c)).toBe('');
-    // Someone reorders by hand: the order changed, the set did not.
-    await call(app, 'PUT', '/checklists/41/items/order', { item_ids: [402, 401, 403, 404] });
-    expect(await browser.checklistReorderPrecheck(c)).toMatch(/^The order of the items on "Pre-filing" changed since this card was prepared/);
-    // A fresh card; then an item is added — the item set changed.
-    const c2 = await card({ checklist_id: 41, item_ids: [403, 404, 401, 402] });
-    expect(await browser.checklistReorderPrecheck(c2)).toBe('');
-    await call(app, 'POST', '/checklists/41/items', { name: 'Late add' });
-    expect(await browser.checklistReorderPrecheck(c2)).toMatch(/^The items on "Pre-filing" changed since this card was prepared/);
-    // A fresh card, applied through its own request: exactly the reviewed order.
-    const c3 = await card({ checklist_id: 41, item_ids: [403, 404, 401, 402, (await order(41))[4]] });
-    expect(await browser.checklistReorderPrecheck(c3)).toBe('');
-    const r = browser.checklistReorderRequest(c3);
-    const res = await call(app, r.method, r.path, r.body);
-    expect(res.status).toBe(200);
-    expect(browser.checklistReorderResult(c3, res.body)).toEqual({ checklist_id: 41 });
-    expect(await order(41)).toEqual(r.body.item_ids);
-  });
-
-  test('the card refuses what the route refuses — a set that is not the list\'s, a note — and an order that changes nothing', async () => {
-    await expect(card({ checklist_id: 41, item_ids: [401, 402, 403] })).rejects.toThrow('A reorder names EVERY item on "Pre-filing" exactly once (4 items) — missing #404 "Bank statements"');
-    await expect(card({ checklist_id: 41, item_ids: [401, 402, 403, 404, 431] })).rejects.toThrow('not on this list: #431');
-    await expect(card({ checklist_id: 41, item_ids: [401, 402, 403, 404] })).rejects.toThrow('already in that order');
-    await expect(normalizeActionDraft(pool, { kind: 'checklist.items.reorder.v1', checklist_id: 42, item_ids: [1, 2], evidence: [{ query_id: 'q1', row_number: 2 }] }, ev, { currentUserId: 6 }))
-      .rejects.toThrow('"Call log" (#42) is a NOTE');
-    const r1 = await call(app, 'PUT', '/checklists/41/items/order', { item_ids: [401, 402, 403] });
-    expect(r1.status).toBe(409);
-  });
 });

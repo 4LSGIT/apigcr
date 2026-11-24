@@ -131,7 +131,7 @@ a type is used before it changes.
 | **Switches** | The documents sync, court ingest and trustee validation kill switches; the RingCentral text opt-out reconcile (read-only — changed from the SU console) |
 | **Alert thresholds** | Which severity emails, and the repeat cooldown; how many hours without an inbound text before a phone provider is reported silent |
 | **Integrations** | Which Connections credential Dropbox, e-sign and Google use, and the firm calendar |
-| **Ask Casey** | Every Casey switch — one per action family, each on unless set to 0 — the Casey v2 model menu (which models, in what order, a note on each) and its preselected model, plus the monthly AI spend cap (read-only — changed from the SU console) |
+| **Ask Casey** | The Casey model menu (which models, in what order, a note on each) and its preselected model, plus the monthly AI spend cap (read-only — changed from the SU console). The previous Casey's per-family switches are retired keys (2026-11-24) |
 | **Comms archive & AI** | The comms archive's modes and limits, shown here until the comms tools get a settings page of their own; most are changed from the SU console |
 | **Runtime state** | Watermarks, heartbeats and counters the system keeps — read-only text, for diagnosis (JSON shown laid out) |
 

@@ -40,7 +40,7 @@ is shown as a badge you can't edit: staff own titles, machines own tags.
 | Add items to a note, or a body to a checklist | The two shapes are mutually exclusive |
 | Convert a note into a checklist or back | It would strand your text or your items, so it's refused rather than guessing which to lose |
 | Delete someone else's personal list, or re-home it away from them | It's theirs |
-| Drag items into a new order | The board has no reorder control. Ask Casey to reorder a list instead — its reviewed card shows every item before and after, and saves the whole order in one step |
+| Drag items into a new order | The board has no reorder control. Ask Casey to reorder a list instead — it proposes the reorder route as a card, the whole order in one step |
 
 **But you can absolutely work on someone else's list** — create one for them,
 add items, tick them off, rename them. Delegation is the point. Only

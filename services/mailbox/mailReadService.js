@@ -2261,8 +2261,8 @@ async function priorLogId(conn, msg) {
  * e.g. the `gmail-firm` rows logged under Gmail's id before dedup-A).
  * Subject-blind, like the copy rule: a different email that reuses the
  * Message-ID (the CONTENT-AWARE RFC KEY's case) is found only when it has no
- * stamp of its own. Shared by caseLink and caseUnlink (A13X), and mirrored
- * read-only by the Casey cards (assistantService.mailResolvedLog).
+ * stamp of its own. Shared by caseLink and caseUnlink (A13X); Casey v1's cards
+ * mirrored it read-only until v1 retired (Casey v2 S6, 2026-11-24).
  */
 async function existingLogId(conn, msg) {
   if (msg.message_id) {

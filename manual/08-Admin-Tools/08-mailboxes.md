@@ -378,9 +378,8 @@ Comms](#phone-lines--comms), below).
   the conversation, messages that were unread when you opened it keep a
   **New** tag (and a blue left edge), so you can still see what arrived since
   you last looked; **Mark unread** / **Mark read** in a message's **⋯** menu
-  switches it (the tag then says **Unread**). An Ask Casey card that marks a
-  message read or unread, marks several read, links it to a case or takes it
-  off one — and **Mark read**, **Mark unread**, a case link, an **Unlink** or a
+  switches it (the tag then says **Unread**). A Casey card that runs one of
+  these routes — and **Mark read**, **Mark unread**, a case link, an **Unlink** or a
   **Mark all read** made on another Comms page or a Comms tab in this browser
   — updates an open Comms page without a reload (a Mark all read made
   elsewhere re-reads the list and the counts; messages open in the
@@ -644,15 +643,11 @@ anyone who may send from at least one box.
     above). If the copy cannot be saved, the email still went out — you are
     told, and IT gets a warning. Like other Sent mail of these boxes it is
     not put on any log by itself — use **Link to case** on it.
-- **Ask Casey** sends through this same path: its email card may copy
-  contacts (Cc/Bcc), reply to an email it has shown you, fill the **Case**
-  field, attach registered documents (the same **Files** rules and limits —
-  Casey looks each file up in Documents first and re-checks it when you
-  click; at most seven on one card) and use **Send later** (the same window;
-  the card shows the firm time, and the scheduled email appears in your
-  **Scheduled** list here, where you cancel it), under your own send access,
-  the 10-recipient limit, the opt-out question and the case-link behaviour
-  above (Ask Casey chapter, *Sending a text or email*).
+- **Ask Casey** sends through this same path: a send card it proposes is
+  this route, run by your click under your own send access — the content is
+  shown open on the card with a warning, and the 10-recipient limit, the
+  opt-out rules and the case-link behaviour above all apply (Ask Casey
+  chapter).
 - **Daily limit.** Each sending account (one Google account, or one SMTP
   login) may send a set number of emails in any 24 hours — counting
   automation emails through the same account, and attempts the provider

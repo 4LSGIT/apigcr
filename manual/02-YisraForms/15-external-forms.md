@@ -375,7 +375,7 @@ everything linked to it (adopted rows carry an `adopted` badge).
 
 The Inbox and a case's **Form Submissions** tab refresh themselves when a
 submission is linked or submitted elsewhere in the same browser (another tab,
-Ask Casey) — a form submitted before it ever saved a draft included. A
+a Casey card) — a form submitted before it ever saved a draft included. A
 submission made in another browser — another staff member's, or a client's
 through a public form link — shows on the next reload.
 

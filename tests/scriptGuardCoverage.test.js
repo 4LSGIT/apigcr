@@ -62,11 +62,6 @@ const EXEMPT = {
     'responses.shift() sequences stubbed provider FETCH RESPONSES (plain or ' +
     'SSE-bodied), not DB rows; an exhausted queue returns undefined, which ' +
     'fails the call under test loudly. No DB stub exists in the file.',
-  'assistantAnswerStream.test.js':
-    'queue.shift() hands scripted aiService.call() RETURN VALUES for the ' +
-    'answer stage only (an exhausted queue throws "unscripted answer call" — ' +
-    'fail-loud by construction); investigate calls are fixed, not scripted. ' +
-    'Its DB is the shared capDb() mock keyed on SQL text, with no script array.',
   'aiServiceConverse.test.js':
     'responses.shift() sequences stubbed provider FETCH RESPONSES for converse() ' +
     '(SSE-bodied or JSON error), not DB rows; an exhausted queue returns undefined, ' +

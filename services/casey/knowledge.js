@@ -1,13 +1,14 @@
-// services/assistantKnowledgeService.js
-// Read-only search over the shipped YisraCase manual. This gives the assistant
-// product knowledge without trusting its pretraining or putting manuals in SQL.
+// services/casey/knowledge.js — read-only search over the shipped YisraCase manual,
+// behind Casey's search_docs tool (services/casey/tools/search_docs.js) and the MCP
+// server's. Product knowledge without trusting pretraining or putting manuals in SQL.
+// Was services/assistantKnowledgeService.js until v1 retired (Casey v2 S6).
 
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 
-const MANUAL_ROOT = path.join(__dirname, '..', 'manual');
+const MANUAL_ROOT = path.join(__dirname, '..', '..', 'manual');
 let cache = null;
 
 function walk(dir) {

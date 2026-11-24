@@ -31,15 +31,13 @@ const pdfFns = require('../lib/internal_functions/pdf');
 const SRC = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 
 test('no reader requires dropboxService any more; each reaches storage through documentSourceService', () => {
-  for (const f of ['services/documentIngestService.js', 'services/assistantService.js', 'lib/internal_functions/pdf.js', 'lib/internal_functions/ai.js']) {
+  for (const f of ['services/documentIngestService.js', 'lib/internal_functions/pdf.js', 'lib/internal_functions/ai.js']) {
     const src = SRC(f);
     expect({ f, requires: /require\(['"](\.\.\/)*(\.\/)?(services\/)?dropboxService['"]\)/.test(src) }).toEqual({ f, requires: false });
     expect(src).toMatch(/documentSourceService/);
   }
   expect(SRC('lib/internal_functions/pdf.js')).toMatch(/storage\.download\(db, dropbox_path \? dropbox_path : \{ humanLink: dropbox_link \}/);
   expect(SRC('lib/internal_functions/ai.js')).toMatch(/storage\.download\(db, file_dropbox_path \? file_dropbox_path : \{ humanLink: file_dropbox_link \}/);
-  expect(SRC('services/assistantService.js')).toMatch(/caseFolderStorage\(\)/);
-  expect(SRC('services/assistantService.js')).not.toMatch(/caseFolderDropbox/);
 });
 
 describe('parse_pdf downloads through the seam — the recorded provider call is the old one', () => {

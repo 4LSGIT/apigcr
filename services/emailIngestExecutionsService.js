@@ -449,7 +449,7 @@ module.exports = {
   VALID_ACTION_STATUSES,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
-  // Reused by the Casey read surface (services/automationReadService.js, A20.0)
+  // Was reused by Casey v1's read surface (services/automationReadService.js, A20.0 — v1 retired at S6; that service is dead code pending the S6d cleanup, ref/plans.md)
   // so rule / action / suppression names hydrate one way.
   _hydrateNames,
 };

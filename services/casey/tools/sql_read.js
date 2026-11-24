@@ -14,7 +14,7 @@
 //      run_by = the user, the SQL text and the purpose logged exactly as v1's
 //      sql.read step logs them (report_key 'assistant_chat', log_sql:true):
 //      the run log is the review trail.
-// The same path v1's sql.read step takes; the readonly-key pool (sqlGuard) is
+// The path v1's sql.read step took (v1 retired at S6); the readonly-key pool (sqlGuard) is
 // NOT used — that account reads password hashes and mail bodies (§8.5).
 'use strict';
 

@@ -5,8 +5,8 @@
  * Run: npx jest tests/queryAiLoadOrder.test.js
  *
  * THE DEFECT (live 2026-10-23 → 10-26): services/aiService → lib/aiPrompts →
- * assistantAnswer (generates its function reference from the registry at
- * load) → lib/internal_functions → ai.js → services/aiService, still loading.
+ * v1's assistantAnswer (it generated its function reference from the registry
+ * at load; retired at S6) → lib/internal_functions → ai.js → services/aiService, still loading.
  * ai.js held aiService at module scope, so it captured the half-built exports
  * object that aiService's final `module.exports = {…}` then replaced; on a
  * process that loads aiService first, query_ai threw "aiService.call is not a
@@ -28,11 +28,11 @@ const fns = require('../lib/internal_functions');
 
 afterEach(() => jest.restoreAllMocks());
 
-test('the cycle is real: loading aiService first pulls the function registry in mid-load', () => {
-  // If this stops being true the lazy require is merely harmless, not load-bearing.
-  const cached = Object.keys(require.cache);
-  expect(cached.some(k => k.endsWith('lib/aiPrompts/assistantAnswer.js'))).toBe(true);
-  expect(cached.some(k => k.endsWith('lib/internal_functions/ai.js'))).toBe(true);
+test('ai.js requires aiService lazily — inside query_ai, never at module scope (the cycle\'s v1 trigger, assistantAnswer, went at S6; the convention stays load-bearing for the next prompt that reads the registry at load)', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'internal_functions', 'ai.js'), 'utf8');
+  const top = src.split('\n').filter(l => /^(const|let|var)\s.*require\(/.test(l));
+  expect(top.some(l => /aiService/.test(l))).toBe(false);
+  expect(src).toMatch(/require\(['"]\.\.\/\.\.\/services\/aiService['"]\)/);   // the lazy one, inside the function
 });
 
 test('query_ai reaches aiService.call when aiService was loaded before the registry', async () => {

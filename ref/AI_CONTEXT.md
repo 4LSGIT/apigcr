@@ -10,8 +10,9 @@
 <!-- KNOWN MISSING SECTIONS (debt: docs/20260914_coverage_gaps): e-sign,     -->
 <!-- portal, YisraForms/templates, reports, pipeline engine, document sync,  -->
 <!-- booking landings. manual/ is authoritative for those meanwhile.        -->
-<!-- CONSCIOUS DEFERRALS (review #4): §0's Ask Casey (A*/P*/R*) and mailbox   -->
-<!-- (S2/S3/S-PH) entries stay until their arcs close (tier 2); the court    -->
+<!-- CONSCIOUS DEFERRALS (review #4): §0's mailbox (S2/S3/S-PH) entries stay  -->
+<!-- until their arc closes (tier 2; the Ask Casey v1 A*/P*/R* entries went  -->
+<!-- when v1 retired at Casey v2 S6, 2026-11-24 — §33 is the stub); the court -->
 <!-- NEF, forms/sync-bus (11-11..14) and Sept (G2/G4/W1/DBKQ/FIL1/Manage/   -->
 <!-- SYNC-1) entries wait for the sections above. Custom fields, CTA links   -->
 <!-- and recipient consent got sections 36-38 in review #4; YisraMail C*/T*  -->
@@ -52,8 +53,7 @@ body. Governing migrations in `ref/migrations/`.*
   `flag_for_review` tool (one per turn, filed through the real route over
   loopback as the user) file it; the Support Inbox shows a Casey card and an
   "Open chat" link. RULING (Fred): a superuser may read ANY chat — `GET
-  /api/casey/review[/:id]` behind the SU casey guard (elevation), not darkened
-  by the flag; Admin → Casey Chats (`public/caseyReview.html`) lists every
+  /api/casey/review[/:id]` behind the SU casey guard (elevation); Admin → Casey Chats (`public/caseyReview.html`) lists every
   user's chats and hosts the pane in review mode (`casey.html?review=<id>`).
   The S2 "private to its user, superusers included" rule is over; the manual
   says so. Design §9 S4b; manual 05-Subsystems/17, 09; 08-Admin-Tools/14.
@@ -61,7 +61,7 @@ body. Governing migrations in `ref/migrations/`.*
   (versions per `scope`: `global`, or a route family as `lib/routeFamilies.familyOf`
   names it; never updated or deleted — a restore is a new version) edited in
   Admin → Casey Notes (`public/caseyNotes.html`, `/api/casey/notes*`, gate
-  `system.settings`, not darkened by the flag). The GLOBAL note is appended to
+  `system.settings`). The GLOBAL note is appended to
   the system text (`lib/caseyPrompt.systemText(notes)`) and hashed into the
   chat's `prompt_version` (`signature(tools, notes)`): an edit is a prompt
   change — open chats drop their stored thinking on their next turn, as
@@ -132,9 +132,9 @@ body. Governing migrations in `ref/migrations/`.*
   §9 S3a-2, S3a-3.
 
 - **Casey v2 S3a — the page (11-22):** `public/casey.html` in the shell's
-  `#caseyFrame` when `GET /api/casey/boot` says v2 is on (`openCasey` decides
-  once per shell load; v1's `/assistant.html` otherwise). The turn / chat
-  routes are staff (`jwtOrApiKey` + `staffOnly`, 403 while the flag is '0',
+  `#caseyFrame` (since S6, 2026-11-24, the only pane — the boot choice and
+  the v1 fallback are gone). The turn / chat
+  routes are staff (`jwtOrApiKey` + `staffOnly`,
   checked in the handler); `POST /api/casey/turn/stop` + `casey_chats.
   stop_requested_at` (migration `2026-11-22_casey_v2_s3a_stop.sql`); the
   page's `context` → the user message's Page line; default model Sonnet 5.5;
@@ -149,7 +149,7 @@ body. Governing migrations in `ref/migrations/`.*
   stops and the budget in design §9 S2); `services/casey/chats.js` over
   `casey_chats` / `casey_messages` (the raw block array, user-private — until S4b: a superuser reads any chat through the review routes — one turn
   per chat by a conditional claim); `POST /api/casey/turn` (NDJSON) + the chat
-  routes, SU only, dark while `casey_v2_enabled`='0'. Settings `casey_v2_model`
+  routes, SU only (the `casey_v2_enabled` switch retired at S6). Settings `casey_v2_model`
   / `casey_v2_effort` are frozen on each chat. Volatile text (time, user) is the
   first block of each user message, NEVER the system prompt — the prefix is the
   cache key and the thinking binding. Migration
@@ -161,7 +161,7 @@ body. Governing migrations in `ref/migrations/`.*
   JSON only, Authorization forwarded, elevation not), `lookup_routes` (judged
   for the caller), `read_source` (real-path confined to six dirs),
   `search_docs`; `runTool` wraps every result in one envelope. Exposed only to
-  SU through `POST /api/casey/tools/:name`, dark while `casey_v2_enabled`='0'.
+  SU through `POST /api/casey/tools/:name` (the switch retired at S6).
   A new tool = a file there + its row in `tests/caseyTools.test.js`'s name list.
   Design §9 S1.
 
@@ -175,80 +175,6 @@ body. Governing migrations in `ref/migrations/`.*
   same slice. Design and as-built: `ref/CASEY_V2_DESIGN.md` §8–9. v1 (§33)
   is frozen, deleted at S6.
 
-- **A11X — Casey generates / registers documents and manages the sync roots
-  (11-17, Fred: "release means allow"):** three A11 deferrals released.
-  `document.generate.v1` {template_id, linkable_type, linkable_id, values?,
-  document_name?} → POST `/api/documents/generate` and
-  `document.register.v1` {external_id} → POST `/api/documents/register` on
-  `casey_documents_enabled`; `document.sync_root.add.v1` {path, note?} →
-  POST `/api/documents/sync-roots` and `document.sync_root.enable.v1`
-  {root_id, enabled} → PATCH `/api/documents/sync-roots/:id` on a NEW switch
-  `casey_document_sync_roots_enabled` (engine configuration). Invariants: the
-  generate card predicts READ-ONLY with the service's own pieces (getTemplate,
-  resolveTemplateValues, fillBlanks, defaultDocumentName) and a NEW pure
-  planner `filePlacementService.describePlacement` — the same branches as
-  `_preparePlacement`, nothing created or raised, pinned rung by rung — the
-  card carrying the request (A0's rule), never the rendered PDF; `values`
-  only on declared keys and only in the user's words (`documentValueNamedBy`);
-  a FILE IS WRITTEN (danger always), collisions get Dropbox's counter. The
-  `document.folder` read now lists one `entry` row per direct entry
-  (`entry_id`, `is_folder`, `registered_document_id`) — the only way a
-  register card learns a Dropbox id (a typed id or any other row refuses by
-  name); the sync-root add's path must be a folder read's head row (that read
-  is the dry run — the BACKFILL warning from its counts); `addRoot` /
-  `setRootEnabled` predicates run read-only in their words (duplicate,
-  nesting, a file; a missing folder is disclosed, not refused); NO delete,
-  no repoint. Freshness: template + record (generate: GET esign template /
-  case / contact), the file's name / size / rev via POST `/api/dropbox/list`
-  of the parent (register), `expected.roots_hash` = SHA-256 of the sorted
-  `id:enabled:path_lower` signature over `formTemplateOps.canonical`, the
-  page hashing the real GET with `formDataHash` (roots). Outcomes: the
-  route's coded ESIGN_* 4xx are refusals; a generate 5xx or `document_id`
-  null is ambiguous (the file may be in Dropbox); register created:false is
-  "already registered"; the sync-root 409s are refusals. Receipts:
-  `document_id` (generate, register), `root_id` (roots — ONE family
-  `syncroot`). Sync: NEW matcher — POST `/api/documents/register` announces
-  `document:<id>` with `yc_refetch` (`registerGetter`); generate had one;
-  roots have none (not bus-watched). Typed reads `document.templates` {q?}
-  (never the body) and `document.sync_roots` (never `sync_cursor`). Prompts
-  plan 43 / investigate 22 / answer 46 / repair 32; ledger 106 kinds;
-  matrix 106 kinds / 107 rows / 91 mounts. Tests:
-  `tests/caseyDocumentsGenerate.test.js` (+ `.mysql`, on `yc_a11x_test`),
-  `tests/caseySyncRoots.test.js` (+ `.mysql`); plan: ASK_CASEY_ACTIONS_PLAN
-  A11 "Released 2026-11-17".
-- **A12Y — Casey template cards carry the CHANGE, not the result (11-16,
-  Fred: "such large cards are kind of pointless … casey needs to be able to
-  edit it" — the dbkq questionnaire's 85 KB draft made every A12X field card
-  refuse at the 60,000-character card gate; plan doc "Cards carry the change,
-  not the result" under A0 "UI contract", the standing rule):** the five
-  A12X kinds drop `next_definition` (a create's `definition`) and carry
-  `apply` — the operation as validated (add: the section's resolved PATH +
-  field + after; update: field_name + changes; remove: field_name; create:
-  fields) — beside `next_hash` / `definition_hash` and `expected`. The apply
-  functions moved into ONE pure module, `public/js/formTemplateOps.js`
-  (`canonical`, `sections`, `sectionRef`, `locate`, `references`, `fieldAdd`,
-  `fieldUpdate`, `fieldRemove`, `createDefinition`, `apply`; refusals thrown
-  with `code: 'FORM_TEMPLATE_OP'`, the A12X texts verbatim; the normalizer
-  wraps them as its 422), which the server `require`s (`formCanonical` IS its
-  `canonical`) and `assistant.html` loads (`formCanonical` delegates to it).
-  The page's builder `formTemplateBuild` (async; the engine takes a sync
-  builder's value as is and awaits a promise) re-reads GET `/:id`, refuses if
-  the draft's hash is not `expected.draft_hash`, re-applies `apply` with the
-  module, refuses unless the result hashes to `next_hash` ("the template
-  changed in a way the card did not foresee"), and only then PUTs it; a
-  builder throw with `refusal: true` is `refusal_error` before the claim
-  (nothing claimed or written). The result check compares the stored row with
-  what was sent (a non-enumerable `__sent` on the draft, never serialized).
-  `formTemplateSized` (60,000) stays as the net. Prompts unchanged
-  (42/21/45/31); no new kind / mount; no migration; no sync matcher. Tests:
-  `formTemplateOps.test.js` (bare-vm purity, one fixture hashed to the same
-  hex by the page's `formDataHash` and the server), `caseyFormTemplates`
-  (+ a synthetic dbkq-shaped 149-section ~82 KB draft →
-  `tests/helpers/formTemplateDbkqShape.js` — a ~2.5 KB card), gated
-  `caseyFormTemplates.mysql` (the click PUTs the ~82 KB re-derived result
-  through the real route; a tampered apply writes nothing), `assistantUi`
-  (the engine path). The four remaining 60,000-char gates are listed in
-  `ref/plans.md` to move to this shape when they next bind.
 - **A13X — mail unlink (native route) + Casey unlink / bulk read (11-16;
   plan doc A13 "Released 2026-11-16"; design §4.3 / §4.4 "Case UNLINK"; manual
   08 "Reading mail — Comms", manual 05/17 "Email: read state and case
@@ -265,7 +191,9 @@ body. Governing migrations in `ref/migrations/`.*
   not on a case" and re-reads the list when a row showed a case; the Comms tab
   needed no change (its 'case_id' subscriber fires on the key, whatever the
   value — pinned). Hub UI: **Unlink** beside Change, a two-step confirm in the
-  log line. Casey: `mail.case_unlink.v1` {mail_message_id, evidence} (family
+  log line. (Casey v1's `mail.case_unlink.v1` and `mail.read.bulk.v1` cards over
+  these routes went with v1 at S6, 2026-11-24; the paragraph below describes
+  the ROUTE behaviour they relied on.) Casey v1: `mail.case_unlink.v1` {mail_message_id, evidence} (family
   `mail_unlink`, receipt `log_id`; predicts with the shared `mailResolvedLog`;
   refuses the three 409s first; the case it leaves is read from the log row;
   danger line LEAVES CASE …; the click re-reads GET `/api/mail/messages/:id`)
@@ -289,9 +217,8 @@ body. Governing migrations in `ref/migrations/`.*
   `marked` 0. Refusal texts name the four cards and what stays unavailable
   (drafts, flags, archive, delete, move-by-key, SMS / call triage). Prompts
   42 / 21 / 45 / 31; permissions 102 kinds / 86 mounts; ledger +2. Tests:
-  `tests/mailboxS2.routes.test.js`, `tests/caseyMailTriage.test.js`, gated
-  `tests/caseyMailTriage.mysql.test.js`, `tests/caseyMailTriage.panes.test.js`,
-  `tests/ycSync.test.js`, `tests/assistantUi.test.js`.
+  `tests/mailboxS2.routes.test.js`, `tests/caseyMailTriage.panes.test.js`,
+  `tests/ycSync.test.js`.
 - **Comms hub send extras — attachments + scheduled sends (11-16; design
   §4.2 "Attachments" / "Scheduled sends"; manual 08 "Sending mail"):**
   `POST /api/mail/send` takes `attachments: [{document_id}]` — REGISTERED
@@ -324,45 +251,6 @@ body. Governing migrations in `ref/migrations/`.*
   `firmLocalToIso`), Scheduled (n) in the rail + composer footer with a
   two-step Cancel; the list never loads at boot. Tests:
   `mailboxSendExtras.send` / `.mysql` / `.pane`.
-- **Casey field-level form template edits and creation (A12X, 11-16, Fred:
-  "release means allow"):** five kinds in the A12.4 `form_template` family,
-  same switch `casey_form_templates_enabled`, same receipt (`template_id`; a
-  create's is the NEW row's id): `form.template.field.add.v1` {template_id,
-  section?, field, after?}, `form.template.field.update.v1` {template_id,
-  field_name, changes — null drops a key, never `name`},
-  `form.template.field.remove.v1` {template_id, field_name} and
-  `form.template.meta.v1` {template_id, title} → ONE PUT
-  `/api/form-templates/:id` (`{draft_definition}` or `{title}`);
-  `form.template.create.v1` {form_key, title, link_type, fields} → POST
-  `/api/form-templates` (`formTemplateOps.createDefinition`: ONE section
-  "Section 1", one row per field). Invariants: NEVER a whole-definition
-  replace — the normalizer re-reads the draft (`getTemplate`), applies the one
-  operation to a copy (`public/js/formTemplateOps.js`, the module the page
-  loads too), runs the service's `validateDefinition` (its message is the
-  refusal), asserts `authoredKeyChanges(next, draft)` is empty and puts the
-  operation (`apply`) and the SHA-256 of the result on the card (`next_hash`;
-  a create's `definition_hash`) with A12.4's `formTemplateExpected` — never
-  the result (A12Y, above); the browser re-reads GET `/:id` + `/versions` (a
-  create: the list, for its form_key) and refuses on ANY difference,
-  re-applies `apply` with the module and sends the result only when it hashes
-  to `next_hash`, and compares the row the route answers with what it sent
-  key-order-insensitively. The diff is `formTemplateDefDiff` (no second copy);
-  the card also shows the record column, the bump the next publish would make
-  (`fieldSignature` of the new draft vs the PUBLISHED definition), the drafts
-  on the current version that bump strands, FIELD REMOVED / TYPE CHANGE, and
-  that NOTHING PUBLISHES. Refused by name: code / hooks / css, embed and
-  content items and their keys, a `$load` prefill or source, a raw
-  definition, a rename (`changes.name`), a form_key rename, a link_type
-  change, a form_key in use, a field a condition or derive rule still names
-  (`formTemplateReferences`), a repeater's last row field. A field a card adds
-  or creates must be NAMED BY THE USER (label or name in their words, or a
-  cited row — `formTemplateNamedBy`). `section` = title / repeater key / path;
-  `after` = a field in it (absent: a new row at the end). The route's form_dev
-  gate never trips (authored keys are copied verbatim). No sync matcher.
-  Prompts 41/20/44/30. Tests: `caseyFormTemplates.test.js`, gated
-  `caseyFormTemplates.mysql.test.js` (the REAL PUT / POST, the re-derived body),
-  `caseyActionPermissions.test.js` (100 kinds / 84 mounts); plan:
-  ASK_CASEY_ACTIONS_PLAN A12.4 "Released 2026-11-16"; manual 05/17, 02/14.
 - **Comms polish bundle A (comms-polish-2, 11-16):** Email tab: the card's
   ⋯ menu anchors to its button's LEFT edge (`.mmenu { left: 0 }`, `.flip`
   to the right only when it would overrun `.thread-body` — the right-anchored
@@ -413,31 +301,6 @@ body. Governing migrations in `ref/migrations/`.*
   it via `openCommsMessage(id)` (index.html) → `ycOpenMessage` (comms.html)
   or the workspace rest `email~m<id>`. Design §4.4 "Body search + the task's
   email link"; manual 08.
-- **Casey case folder extras (A11.1X, 11-15, Fred: "release means allow"):**
-  same switch `casey_document_relink_enabled`, same twin. (1) A TYPED
-  `folder_path` on `case.folder.relink.v1` is proposable when a new typed read
-  `document.folder` {path} of the EXACT path (cited; the case's candidates
-  read still required) proved it — `documentFolderRead`: `getMetadata` (a
-  FolderMetadata) + non-recursive `listFolder` (≤ 500 entries) through the
-  documents sync's credential, the enabled root it sits under, registered files,
-  `_loadFolderOwners` (holder / nested / inside); re-read at proposal; the
-  card's lane line becomes the Dropbox proof plus a NOT A CANDIDATE danger line
-  (`folder.confidence` 'typed'). (2) `case.folder.dismiss.v1` {case_id,
-  undo?} → POST `/api/documents/relink/dismiss`, ONE case (bulk keys refused by
-  name — the array form is the panel's), refused with no cache row or a state
-  already equal; never danger; no event, no log entry, NO bus matcher
-  (the relink state on `entity_folders` is not bus-watched); `updated: 0` = refusal; family
-  `case_folder_dismiss`. (3) `case.folder.relink.undo.v1` {case_id, log_id} →
-  the SAME POST `/api/documents/relink` with the audit entry's `old_path`
-  (no new write route): the entry is cited from a `sql.read` of `log`
-  (`log_extra` is outside the manifest — the server reads it), must be the
-  case's LATEST "Case Dropbox folder re-linked" entry, `old_path` non-null,
-  and the case's folder link (the `entity_folders` binding; `case_dropbox` on the payload) must still equal its `new_link`; the old folder is
-  proved like a typed path; the undo writes its own entry. Browser prechecks for
-  typed / undo: the candidates GET (case link + cached path) + POST
-  `/api/dropbox/list` {path, max_entries:1} (409 / 404 → refused before the
-  claim). Receipts: STRING case_id. Prompts plan 40 / investigate 19 / answer 43
-  / repair 29. Plan: ASK_CASEY_ACTIONS_PLAN A11.1 "Released". Bulk stays NEVER.
 - **Trigger + ingest code bodies open to all staff (11-15, Fred's ruling):**
   `lib/triggerCodeGate.js` (trigger rule POST/PUT, `test-draft`) and
   `lib/ingestCodeGate.js` (email/phone ingest rule + suppression writes,
@@ -452,34 +315,6 @@ body. Governing migrations in `ref/migrations/`.*
   writers). Casey's ingest cards drop `requires_capability`: a code card is
   flagged by `draft.code` (its card line + danger styling) and applies for
   any staff user. Prompts: assistant_answer 39, assistant_plan 36.
-- **Casey query_db and webhook steps (A17.4a/b, 11-15):** the workflow kinds
-  (`workflow.draft.v1`, `.step_insert.v1`, `.step_edit.v1`; flag
-  `casey_workflow_authoring_enabled`) author both. `query_db` is NOT on
-  `CASEY_AUTHORABLE_FUNCTIONS`; it is in `CASEY_STRUCTURED_FUNCTIONS` (class
-  `read`; `caseyIngestActionClass` never reads it), and
-  `normalizeAuthoredStep` (async since this slice — it takes `db` and
-  `{userText, siblings}`) routes it to `normalizeQueryDbParams`: tables, ops
-  and join types from `lib/internal_functions/db.js` `__QUERY_DB_RULES` (the
-  runtime's own sets, frozen), every column `ref.column` checked against
-  `information_schema.COLUMNS` (aliased keys — MySQL 8 returns I_S names
-  upper-case), blocked columns refused in every position (plus the
-  `ASSISTANT_DENIED` token names; SSN / DOB allowed), defaults written,
-  output a fixed point; no `*`, no html_rows / `base_url`. Webhook steps
-  (class `external-call`): literal https URL, never templated, evidenced by
-  the user's own words (current message + last four user turns, whole-token
-  match — `draftUserText`) or, without a query string, a host a step of the
-  SAME workflow or a credential's `allowed_urls` holds; auth only via a
-  credential LABEL the user names (or this workflow's existing host pair),
-  never a new host with a credential, `checkUrlScope` at proposal time;
-  `credential_id` / `headers` refused; explicit method; timeout default
-  15 000. An edit's `changes.webhook` merges over the stored call (a step with
-  stored headers is refused; an unchanged URL needs no evidence). Cards: the
-  query in words + READS ONLY; the full URL, credential label, body + A17.2
-  dry run, timeout, LEAVES THE FIRM, the retry fact. Tests:
-  `tests/caseyWorkflowQueryWebhook.test.js`, the e2e block of
-  `tests/caseyWorkflowStep.test.js`, gated
-  `tests/caseyQueryDbColumns.mysql.test.js`; plan:
-  ref/ASK_CASEY_ACTIONS_PLAN.md A17.4a / A17.4b.
 - **The public form's draft precondition (11-14):** POST
   `/api/ext/forms/:form_key/draft` takes `expected_updated_at` — the server
   draft's stamp the page last saw (the D1 GET's `draft.updated_at`, then each
@@ -631,147 +466,11 @@ body. Governing migrations in `ref/migrations/`.*
   and `/api/contacts/{linkId}` load/patch targets (else 422). yc-sync announces
   `form:<type>:<id>` plus the record's `changes`. Manual: 02-YisraForms Parts 8,
   11. Tests: `formsSubmitDraft.test.js`, gated `formsSubmitDraft.mysql.test.js`.
-- **Casey's form submit card (A12.3, 11-11):** kind `form.submit.v1`
-  {submission_id = the DRAFT row} → that route with `expected_updated_at` = the
-  draft's updated_at the card read (`normalizeFormSubmit`; flag
-  `casey_forms_enabled`). Invariants: the card discloses the patch with the
-  route's OWN `resolvePatchTarget` / `resolveBase` / `computeDiffAndPatch` /
-  `wfListOf` (exported from formSubmitService for it — never a second copy);
-  it names EVERY failing answer by looping `validateValues` with the failing
-  declaration relaxed in a deep clone (the route stops at the first); it
-  refuses by name the route's 404 / 409 / 422s and the docket guard. The click
-  re-reads the record, GET `/api/forms/latest` (draft id + updated_at + data
-  hash, the latest submission's id), GET `/api/form-templates/render/:form_key`
-  (schema_version + definition hash) and the patch record (a hash of its row).
-  Every 4xx the route answers precedes its first write (`refusal409`); a 500
-  stays ambiguous. Receipt: the NEW submission id; family `form_submit`. Tests:
-  `caseyFormSubmit.test.js`, gated `caseyFormSubmit.mysql.test.js`; plan:
-  ASK_CASEY_ACTIONS_PLAN A12.3.
-- **Casey's form template cards (A12.4, 11-11):** kinds
-  `form.template.publish.v1` {template_id} → POST
-  `/api/form-templates/:id/publish`, `form.template.visibility.v1` {template_id,
-  visibility} → POST `…/:id/visibility`, `form.template.restore.v1`
-  {template_id, version_id} → POST `…/:id/versions/:versionId/restore`,
-  `form.template.delete.v1` {template_id} → DELETE `…/:id` — the form
-  builder's own controls; own flag `casey_form_templates_enabled` (firm-wide
-  operations). Every card cites a row of the typed `form.template.state` read
-  (no form_key: `listTemplates`; a form_key: the row, the draft vs published
-  diff, `listVersions`, usage + `caseFieldsReaders`). Invariants: the
-  normalizer mirrors the service's refusals (validateDefinition 400; the
-  form_dev gate on an off-internal flip and on a restore whose code / hooks /
-  css differ — read from `users.roles` through `isFormDev`, while the route
-  reads the JWT's roles; version-of-another-template 404; published / used
-  template delete 400) plus three no-ops the routes allow; the publish diff is
-  computed in assistantService because formTemplateService has none, from
-  `buildValueRegistry` / `fieldSignature` / `scanExternalRefusals` /
-  `authoredKeyChanges` / `wfListOf` (no copy). The routes take no
-  precondition: the click re-reads GET `/:id` + `/:id/versions` (updated_at,
-  schema_version, visibility, published_at, definition + draft hashes, version
-  ids). No 4xx follows a write and none is a 409 (no `refusal409`). Receipt:
-  `template_id`; family `form_template`. Editing (PUT) and creating (POST)
-  have no card. Tests: `caseyFormTemplates.test.js`, gated
-  `caseyFormTemplates.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A12.4.
-- **Casey's attachment filing card (A13b, 11-10):** kind
-  `mail.attachments.file.v1` {mail_message_id, case_id, parts, confirm?, move?,
-  link?, folder?, notify?} → ONE `POST /api/mail/messages/:id/attachments/file`
-  (Comms' File attachments route, `emailAttachmentCommsService.fileOne`; staff
-  JWT, read access on the email), after the typed read `mail.attachments.preview`
-  {mail_message_id, case_id?} (the dialog's preview for one email, as the user —
-  evidence must cite it, the mail row and the case row). Invariants:
-  `normalizeMailAttachmentsFile` re-runs the preview itself; it refuses by name
-  bulk, a skip-class part, a part already filed (move carries those), and a
-  `needs_confirm` part missing from `confirm` — it never adds a confirmation (the
-  route's 409 is the backstop); the case is never the preview's suggestion unless
-  named; a typed folder goes through the route's own `exactFolder` (leading
-  spaces kept). Link rides A13's `mailLinkPrediction` in filing mode: an email on
-  another case is a danger line (fileOne's caseLink MOVES it; since 11-11 the A13
-  link card discloses the same move instead of refusing). The browser sends `move` / `link` as explicit booleans (absent =
-  false in the route), the notice batch (`cy` + draft id) only when the notice goes
-  out, then `POST /api/mail/attachments/notice` once something landed; a failed
-  file or `link_error` is "Applied with problems". Receipt `mail_message_id`; switch
-  `casey_mail_attachments_enabled`; tests `tests/caseyMailAttachments{,.mysql}.test.js`;
-  plan ASK_CASEY_ACTIONS_PLAN A13b.
-- **Casey's requirement override cards (A9.4, 11-10):** kinds
-  `case.requirement.override.v1` {case_id, requirement (key or label), status
-  'na' | 'done', note (REQUIRED, one line, ≤255 code points AND UTF-16 units —
-  setOverride clips by the latter)} → POST and
-  `case.requirement.override.clear.v1` {case_id, requirement} → DELETE
-  `/api/cases/:id/pipeline/requirements/:key/override` (the Steps panel's own
-  routes; bare jwtOrApiKey, no new gate). `normalizeCaseRequirementOverrideAction`
-  resolves the step through `getCaseRequirements` (both applicable templates —
-  intake history included; one override marks every step carrying the key),
-  refuses a set that changes nothing (detector-done, same override AND same note —
-  a new note on the same status is a NOTE-ONLY card) and a clear with no override, and DISCLOSES the derived status (for a
-  replace / clear: the REAL resolver re-run over `caseOverrideHiddenDb`, which
-  hides exactly this override from its one overrides read — any other read
-  shape refuses the card), the A9 gated moves it unblocks / re-blocks
-  (`caseOverrideGate`), the portal Next-steps effect (`buildNextSteps`'s rule),
-  the case-log line and the override replaced / dropped. Danger: a REQUIRED step
-  marked done / N/A the system does not see done, or a clear reopening one. The
-  A9 / A9.3 cards still refuse override-shaped keys and point here. Same switch
-  `casey_case_pipeline_enabled`; tests
-  `tests/caseyRequirementOverride{,.mysql}.test.js`; plan ASK_CASEY_ACTIONS_PLAN A9.4.
-- **Casey's relation / role lifecycle cards (A6.2, 11-10):** kinds
-  `contact.relation.end.v1` {relation_id, end_date? (today), end_reason?} /
-  `.reactivate.v1` / `.remove.v1` {relation_id} → PATCH / DELETE
-  `/api/contact-relations/:id` (body fixed by the kind: {active:0, end_date,
-  end_reason} / {active:1, end_date:null, end_reason:''}); `contact.role.
-  deactivate.v1` / `.reactivate.v1` / `.remove.v1` {contact_id, role_id} →
-  PATCH {active} / DELETE `/api/contacts/:id/roles/:rowId`. A6.1's
-  `contact.relation.update.v1` now also takes `type_code` and, on an ENDED
-  relation (active 0 or an end_date), `end_date` / `end_reason` — the tab's
-  Edit dialog. Normalizer-only invariants (the routes guard none): the merged
-  status / end reason must pass the type's vocab (the PATCH re-checks it on
-  every save and would 400); reactivate refuses a retired type / role code and
-  a second ACTIVE relation of the type between the pair; role remove refuses an
-  ACTIVE row (the Roles section offers Delete only on inactive rows; the route
-  would delete it). The judge / trustee link shift is MEASURED by running
-  lib/caseRoleResolver / lib/trusteeRoster over a db wrapper that rewrites the
-  one `cr.active = 1` in each contact_roles query (`roleProjectedDb`); a query
-  of another shape, or any failure, refuses the card — the resolvers swallow
-  errors. Stored links are never re-resolved by a role change, only on the
-  case's next judge / docket / trustee write. Same switch
-  `casey_contact_relations_enabled`; tests
-  `tests/caseyContactRelationsRemove{,.mysql}.test.js`; plan
-  ASK_CASEY_ACTIONS_PLAN A6.2.
-- **Casey's cross-pipeline transfer card (A9.3, 11-09):** kind
-  `case.pipeline.transfer.v1` {case_id, pipeline (template id or name), stage?
-  (key/label on the destination; unnamed = `pwMoveOpen`'s default), note?} →
-  POST `/api/cases/:id/pipeline/move` (`movePipeline`: updateCase type /
-  subtype — only what differs, intake destination writes none — then
-  advanceStage by numeric id). `normalizeCasePipelineTransferAction`
-  (services/assistantService.js) refuses the pipeline the case resolves to now
-  (→ the A9 move card), unknown / inactive template or stage, and any
-  destination `pipelineService.resolveTemplate` on the post-state does not
-  name (phase from the destination role, unchanged on the advance's noop) —
-  the route would leave a phantom. DISCLOSES, never refuses, the destination's
-  REQUIRED steps below the destination stage not done / N/A, projected the
-  resolver's way (override → `requirementDetectors` batch → position;
-  `casePipelineTransferSteps`), plus the old pipeline's open required steps;
-  dry-runs case.updated (source `pipeline_move`) and case.stage_advanced (post
-  type / subtype, the route's default note). NOT ATOMIC: the route's torn
-  message ("case type/subtype updated … but the stage advance failed …") reads
-  in the browser as `Failed — partly written` (`caseTransferKnownOutcome`).
-  Same switch `casey_case_pipeline_enabled`; tests
-  `tests/caseyPipelineTransfer{,.mysql}.test.js`; plan ASK_CASEY_ACTIONS_PLAN A9.3.
-- **Casey's workflow definition read carries the start contract (A17.7c, 11-09):**
-  every workflow row of `automation.definition` (`services/automationReadService.js`)
-  has `test_input_keys` (keys of `workflows.test_input`, sorted — never its
-  values) and `default_contact_id_from`, the two facts A17.7b's start card
-  builds its allowed `init_data` set and contact binding from. The read's
-  prompt stages name them; the card's own check is unchanged.
-- **Casey's enroll card shows which send steps an opt-out will skip (A18.4e, 11-09):**
-  `sequenceEnrollConsent` (services/assistantService.js) reads each resolved
-  send recipient's consent exactly as the step's send will (optoutService —
-  operational SMS; operational email is never blocked, D18; a promotional
-  step reads marketing + its topic). The engine SKIPS such a step and
-  advances (lib/sequenceEngine `recipient_opted_out`), so the card discloses,
-  never refuses; `expected.consent` carries the consent versions the click
-  re-reads through the contact's phone / email list routes.
-- **Casey model calls cache their registered prompt (cspeed, 10-28):** the
-  five assistant stages (`assistant_plan`, plan repair, `assistant_investigate`,
-  `assistant_answer`, `assistant_task_draft_repair`) call
-  `aiService.call({cacheSystemPrefix:true})`: the registered prompt goes out as
+- **aiService caches a registered prompt on request (cspeed, 10-28):**
+  `aiService.call({cacheSystemPrefix:true})` — Casey v1's five stages were its
+  callers (retired at S6, 2026-11-24; v2 caches through `converse`), so no live
+  caller today; `tests/aiService.promptCache.test.js` pins it on the registry's
+  own prompts. The registered prompt goes out as
   a cached system block (5-min TTL), the volatile remainder (currentContext
   timestamp, guards) after it. Landmines: any per-request text prepended or
   substituted INTO a registered prompt silently kills the cache (verify via
@@ -781,165 +480,10 @@ body. Governing migrations in `ref/migrations/`.*
   model needs its cache multipliers added in `computeCostCents` before opting
   in. Deeper caching (conversation/evidence prefix) needs prompt-content
   changes — ruled on separately, see scratch cspeed_2026_10_28.
-  The answer now STREAMS (behind `casey_answer_streaming_enabled`, only `'0'`
-  is off): the plan response offers `answer_streaming`, the pane asks execute
-  for `stream:true` through apiSend `responseType:'response'` (the JWT stays on
-  the shell transport), and at the answer stage the route turns NDJSON —
-  `answer_retry` (the answer input, sealed like a continuation, own kind, 2
-  min, in-process single use), `delta`/`reset` (lib/jsonFieldStream: the root
-  `answer` string only), `final` (exactly the unstreamed body). aiService
-  `onTextDelta` adds only `stream:true` to the request. Invariants: the streamed
-  text is cosmetic — the parsed answer replaces it; a broken stream spends the
-  token ONCE on an ordinary execute (no re-investigation, same user AND chat
-  or 403, used/expired 410 — never 401, which apiSend reads as a dead session);
-  the chat saves once from whichever attempt returned; streaming responses
-  need `Cache-Control: no-transform` or compression() buffers them.
+  (v1's streamed answer went at S6; the lesson stays: a streaming response
+  needs `Cache-Control: no-transform` or compression() buffers it — v2's
+  NDJSON turn sets it.)
 
-- **Casey sends one SMS / email (A14, ruling 15, 10-27):** kinds
-  `sms.send.v1` / `email.send.v1` drive `POST /api/phone-lines/:id/sms` and
-  `POST /api/mail/send` from the card. Invariants: the recipient is one
-  `contact_phones` / `contact_emails` row named by an evidence row
-  (contact_id + phone_id/email_id), active; an opted-out recipient is NOT
-  refused (ruling 17, "casey is like the user"): the draft carries
-  `recipient.opted_out` (optoutService's operational read — an SMS opt-out;
-  never an email one, D18) and `recipient.consent_version`, the card shows it
-  up front, and the send rides `public/js/optoutAck.js` like Comms — the
-  route's 409 `opted_out`, the user's explicit confirm, ONE resend with
-  `acknowledge_optout:true` (never set by the builder), audited
-  `acknowledged_optout`; at click time the browser re-reads the list route's
-  `row.consent` (the server's read) and refuses if `opted_out` or the
-  version moved since review; automation sends still refuse;
-  the body is resolved by `resolverService` (strict) at proposal time and the
-  card sends exactly that
-  text (neither route resolves placeholders); senders are a line/mailbox the
-  user can send from (the route stays the authority). Both routes take an
-  optional `Idempotency-Key` (`phone_lines.sms_send`, `mail.send`) with
-  `releaseOnRefusalOnly`: a send that fails after dispatch KEEPS its claim
-  (409 in_flight → unknown), only a pre-dispatch 4xx releases it — with
-  `workflows.start` (A17.7), the wired scopes where a failure does not free
-  the key. Native callers without a
-  key are unchanged. Off switch `casey_send_enabled`. Plan:
-  ref/ASK_CASEY_ACTIONS_PLAN.md A14.
-- **Casey email sends: cc/bcc, reply, Case field (A14X, 11-15, "release
-  means allow"):** `email.send.v1` also takes `cc` / `bcc` (lists of
-  `{contact_id, email_id}`, each under the To's evidence + reload rule; the
-  route's dedupe — To beats Cc beats Bcc — and `MAX_RECIPIENTS` mirrored at
-  proposal; EVERY recipient re-read at click; Bcc warned on the card),
-  `in_reply_to_message_fk` + `quote_original` (a cited `mail.message` /
-  `mail.search` row; From and To come from `mailboxSendService.replyDefaults`
-  — ONE recipient, and the To must be the cited row's address; the subject
-  defaults to the hub's `Re: …`; the precheck re-reads
-  `GET /api/mail/messages/:id/reply?mailbox_id=` and refuses on a 404 or a
-  different mailbox / To), and `case_id` as the composer's Case field (the
-  hub's `mail_sent_case_link` runs after the send and the card says the link
-  may lag; cited + existing, the recipient need not be on it — flagged
-  `linked_to_recipient`; never inferred). Attachments and scheduled sends
-  stayed refused BY NAME until A14Y (next bullet); MMS media still is — the
-  hub has no route for it. SMS unchanged. Same flag, same route gates; no route change. Plan: A14
-  "Released 2026-11-15".
-- **Casey email sends: attachments + scheduled sends (A14Y, 11-16, "release
-  means allow" — the hub's own routes shipped the same day, 376b89f):**
-  `email.send.v1` also takes `attachments` (a list of `{document_id}`, each
-  CITED by an evidence row carrying that `document_id` — a `sql.read` over
-  `documents` or a typed row; never a name / path / URL; the normalizer runs
-  the hub's OWN `mailboxSendService.loadAttachments` — its query, its caps,
-  its words — and the card lists name · size · id, the total and the caps
-  from the constants; precheck `GET /api/documents/:id` per file refuses a
-  404 / non-active / moved name or size; the builder sends exactly the
-  reviewed ids; bytes are fetched by the hub at send time) and `send_at`
-  (the hub's own `parseSendAt` — ≥ 2 min ≤ 30 d, ISO WITH zone; shown in
-  firm time + UTC; the card becomes a SCHEDULE card and the SAME body +
-  `send_at` goes to `POST /api/mail/send/schedule`, Idempotency-Key the
-  draft_id (scope `mail.schedule`), the `optoutAck` 409 confirm reused;
-  precheck re-checks the window against `GET /api/mail/identities` →
-  `limits`; the result reads `job_id` / `send_at`). Same kind, same family,
-  same `casey_send_enabled`: the ledger receipt stays `contact_id` (keyed by
-  kind), `job_id` rides in the result. Engine (additive): a family's
-  `title` may be a function of the draft; `ambiguousText(detail, draft)`.
-  A card carries ≤ 7 files (8 refs, one the To). Still refused by name: MMS
-  media, scheduling a TEXT. Permissions matrix 101 rows / 100 kinds / 85
-  mounts. Plan: A14 "Released 2026-11-16".
-- **Casey authors email/phone ingest rules (A20.2 + A20.3, 10-27):** six
-  kinds, each ONE request to the rule editor's own route —
-  `ingest_rule.create.v1` (`POST /api/{ch}-ingest/rules`, born `active: 0`
-  pinned by the browser builder — the column defaults to 1), `.update.v1` /
-  `.set_active.v1` (`PUT …/rules/:id`), `.action_add.v1` (`POST
-  …/rules/:id/actions`), `.action_update.v1` / `.action_remove.v1` (`PUT` /
-  `DELETE …/rule-actions/:id`). `POST …/rules` now takes optional inline
-  `actions` (≤ 10, validated with the action route's own shape + reference
-  checks, inserted in the create's transaction, so the 'create' log row holds
-  them; a refused reference rolls the rule back) and an optional
-  `Idempotency-Key` (`{email,phone}_ingest.rules_create`); native callers
-  are unchanged. Invariants: every edit's `expected_base` is the
-  `definition_updated_at` of the CITED `automation.definition` rule row (the
-  read surface now carries it, plus the change log as field-level `change`
-  rows) and must equal the live stamp at proposal time; the browser re-reads
-  the rule at click time (`GET …/rules/:id`) and refuses before the claim
-  if it moved; the route's 409 renders as a refusal. An ACTIVE rule's card is
-  danger-styled and says the change applies to the next matching message.
-  Grammar built field by field: no empty condition group (match-all), no NEW
-  regex (`matches` / `regex:` run on V8's backtracking engine in-process on
-  every message — a pattern the edited rule already runs may be kept), action
-  configs closed per type, targets existing + active, internal functions from
-  the A17 allowlist plus the ingest-only forwards (`forward_as_email` /
-  `forward_as_sms`: event `"$"` on a passthrough rule, literal firm sender,
-  literal destination classified firm/outside on the card, an opted-out
-  NUMBER refused (an email opt-out is marketing-only — D18 — and never
-  refuses a forward); NOT workflow-draft authorable), `send_email`/`send_sms`
-  from a quoted literal firm sender, no `http` actions (A17.4b's contract serves workflow webhook steps, not yet ingest actions; existing ones may be renamed /
-  toggled / moved / removed, never re-pointed). Code-mode bodies are
-  authorable and apply for any staff user (the route's ingest code gate
-  refuses only an API key without automations.manage).
-  Off switch `casey_ingest_authoring_enabled`. Plan:
-  ref/ASK_CASEY_ACTIONS_PLAN.md A20.2/A20.3.
-- **Read-loop continuation (R1, 10-26):** a stop in
-  `assistantService.CONTINUABLE_STOPS` (round/step/row/time/token budget)
-  returns `continuation`, a token SEALED by `lib/assistantContinuation.js`
-  (AES-256-GCM, key HKDF'd from JWT_SECRET under its own label — never a valid
-  plan ticket, nor vice versa); `POST /api/assistant/execute`
-  `{continuation, chat_id}` spends it. Invariants: the evidence (which
-  authorizes action cards) and the original signed ticket context live only
-  inside the seal — the route reads neither from the body; bound to `uid` and
-  the chat (`chat_id`, owner-checked via `assistantChatService.owned`, null
-  when history is unavailable); 15-minute TTL, re-sealed per grant; each
-  grant is a full fresh budget (widening sticks), numbering (rounds, q-ids ≤
-  q999) is global, steps a budget left unrun (`pending`) run first; evidence
-  ceiling `MAX_EVIDENCE_CHARS × (grants+1)` up to
-  `MAX_CONTINUED_EVIDENCE_CHARS`. No grant cap by design — per click only,
-  through the same execute rate limit and firm spend cap; the control shows
-  cumulative `approx_cost_cents`. The token is never in the chat payload
-  (`investigation` summary only), so a reopened chat re-asks. A controller
-  truncated at max_tokens is `token_budget`; other controller failures are
-  `controller_unavailable` (both used to read as `model_finished`). Plan:
-  ref/ASK_CASEY_ACTIONS_PLAN.md R1; manual 05-Subsystems/17 "Keep going".
-- **Casey drafts and saves a report (A16, ruling 16, 10-27):** kind
-  `report.draft.v1` → `POST /api/reports`. Reports has no structured spec (a
-  definition IS SQL), so Casey writes the SQL; the authority is the Reports
-  engine, as for `sql.read`: the normalizer runs the create route's own
-  validators and previews through `reportService.execute` on the `yc_report`
-  pool (logged `assistant_report_draft`); the route re-validates on save.
-  Invariants: `contact_ssn` only inside `RIGHT(REGEXP_REPLACE(contact_ssn,
-  '[^0-9]',''),4)` unless the signed question names SSNs
-  (`assistantService.reportSsnUse`); the STORED card preview masks SSN/DOB by
-  column ORIGIN (`execute`'s opt-in `fieldOrigins`), hiding expression columns
-  when either is read in full — conversational reads still refuse both;
-  `report_key` is server-minted; `viz` may be chosen from the Reports chart
-  enum, validated strictly against the previewed columns
-  (`assistantService.reportDraftViz` — whatever the lenient `sanitizeViz`
-  would drop refuses); kind/visibility/source pinned by the browser builder
-  (visibility is stored, never enforced — the lock is the access control); `POST /api/reports` takes an optional `Idempotency-Key`
-  (`reports.create`). Shell destination `reports.report` {id} opens the run
-  panel (`reports.html` `ycAssistantOpenDestination` / `ycSubTab.leaf.take`),
-  where CSV export lives. Every human CSV export (Reports, views, the list
-  exports — `scripts.js` `exportListCsv` / `LIST_CSV` for log, cases,
-  contacts, appts, events, tasks, `exportRowsCsv` for the Calendar list —
-  the SU db console's CSV and TSV Copy) builds its cells through
-  `public/js/csvSafe.js` (`= + - @` / tab / CR → `'` prefix; plain numbers
-  kept; headers too) — a new exporter goes through it
-  (`tests/csvSafe.test.js` fails on a private quoting routine). The report appendix
-  (`lib/aiPrompts/assistantReportDraft.js`, schema + SQL rules) and the larger
-  answer budget ride only `reportDraftRequested` turns. Off switch
-  `casey_report_authoring_enabled`. Plan: ref/ASK_CASEY_ACTIONS_PLAN.md A16.
 - **Opt-out follow-up (10-27): CTA send warns; the contact-level pair is
   dropped.** `POST /api/cta/:id/send` (SU manual send) takes the staff rule
   via `optoutGate`: a real SMS send to an opted-out number (an email opt-out
@@ -957,64 +501,6 @@ body. Governing migrations in `ref/migrations/`.*
   8.4.11): a DROP does not fail on `yc_report`'s per-column grant — the grant
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
-- **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
-  kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
-  references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a
-  rule id for its latest match (run), and six `automation.list` types (rules,
-  suppressions, an executions finder with firm-local `since`/`until`); the
-  dry-run kind `automation.preview_ingest_rule` evaluates a STORED rule only,
-  through `services/ingestRulePreviewService.js` — the same core the native
-  `POST /api/{email,phone}-ingest/rules/test-match|test-transform` routes now
-  call (responses unchanged, golden-pinned). Invariants: nothing in the
-  preview path calls `evaluateRules` (it dispatches and bumps metrics);
-  `email_ingest_sources` is never read; `http` actions project as method +
-  host + credential label. Ingest landmines found while building it:
-  (1) every MATCH moves the rule's `updated_at` (the `match_count` bump is a
-  row UPDATE), so it is not an edit stamp; action writes do not move it —
-  the edit stamp is `definition_updated_at` (A20 slice 1, entry above);
-  (2) `code` match/transform/suppression bodies ran IN THIS PROCESS via
-  `new Function` — now the QuickJS guest, so every route that accepts one
-  takes it from any staff JWT (§27 "Code mode"); (3) a throwing match is
-  a console warning only, never recorded on the execution row; (4) email
-  firm-to-firm mail runs Layer 3. Plan: ref/ASK_CASEY_ACTIONS_PLAN.md A20.
-- **Casey authors send steps (ruling 15, 10-27):** `send_sms` /
-  `send_email` are on the WORKFLOW allowlist too (class `external-send`), so
-  workflow draft / step insert / step edit cards carry sends. Sender rule,
-  closed per engine in `lib/caseyAutomationAllowlist.js`: literal active
-  `phone_lines` / configured `email_credentials` (shared helper), or a
-  placeholder the engine resolves — sequence `{{users.default_phone}}` /
-  `{{users.default_email}}` or a `{{trigger_data.X}}` sender the template
-  already uses on that channel; workflow `{{V}}` / `{{V.key}}` where the
-  nearest earlier writer of V is `get_setting` / `get_settings` reading a
-  registry `senders`-section key (workflow templating is variables-only); the
-  writer may be stored or earlier in the same draft, since `get_setting` /
-  `get_settings` are allowlisted (`read`), their literal keys checked at
-  proposal time (exists byte-exact, not secret by registry or row). Email
-  `attachment_urls` refused; an edit may keep a stored sender/attachments.
-  Neither engine sends from an unresolved sender (the send throws). Cards
-  disclose sender + recipient, danger-styled; publish effects name sends
-  `external-send`. Tests: `tests/caseyWorkflowStep.test.js`,
-  `tests/caseyWorkflowDraft.test.js`, `tests/caseySequenceStep.test.js`, gated
-  `tests/caseyWorkflowSend.mysql.test.js`; plan: ref/ASK_CASEY_ACTIONS_PLAN.md
-  ruling 15 / *Send steps in drafts*.
-- **Casey sequence step insert (A18.2, 10-26):** kind
-  `sequence.step_insert.v1` — one `sms`/`email`/`task` step into a sequence
-  template's DRAFT via `POST /sequences/templates/:id/steps`, function pinned
-  per type by `lib/caseyAutomationAllowlist.js` `CASEY_SEQUENCE_AUTHORABLE`
-  (the senders carry class `external-send`, ruling 14; since ruling 15 the
-  workflow list carries them too). Invariants: the browser builder pins
-  function_name + the no-retry error policy and sends no condition/fire guard;
-  senders follow ruling 15's closed rule (entry above); `delay.at`
-  is a literal future datetime; all seven timing types, closed per type, no
-  `timezone` key; appointment-anchored types disclosed as silently skipping.
-  The route now honours `Idempotency-Key` (scope `sequences.step_insert`, a
-  refusal releases the claim). Flag `casey_sequence_authoring_enabled`.
-  Same slice: `validateInternalFunctionParams` (workflow steps, scheduled
-  jobs, Casey, CTA) refuses a non-own or `__`-prefixed registry name
-  (`toString`, `constructor`, `__getAllMeta`) as an unknown function — they
-  used to reach the meta-less permissive branch. Tests:
-  `tests/caseySequenceStep.test.js`, gated `tests/caseySequenceStep.mysql.test.js`;
-  plan: ref/ASK_CASEY_ACTIONS_PLAN.md A18.2.
 - **Publish precondition + Casey publish card (A17.6, 10-25):**
   `POST /workflows/:id/publish` takes an optional `expected_base`
   `{draft_version, step_count, draft_fingerprint}` — the fingerprint is
@@ -1022,12 +508,11 @@ body. Governing migrations in `ref/migrations/`.*
   together) — checked inside the publish transaction; a mismatch is the same
   structured 409 as the step routes, so a draft edited after the publisher
   read `draft-diff` cannot publish blind. Optional for native callers (the
-  editor does not send it yet — ref/plans.md); every Casey publish card
-  sends it, with `migrate_in_flight` pinned false. Casey's card refuses
-  drafts containing a STANDARD-mode custom_code step (Fred narrowed the
-  2026-10-22 ruling on 10-25: safe-mode steps publish, disclosed on the
-  card) and drafts with validation errors. Tests:
-  `tests/caseyWorkflowPublish.test.js`.
+  editor does not send it yet — ref/plans.md); Casey v1's publish card sent
+  it with `migrate_in_flight` pinned false (the card went at S6; Fred's 10-25
+  ruling — a STANDARD-mode custom_code step blocks an AI-driven publish,
+  safe-mode steps allowed — stands for any future card). Tests:
+  `tests/workflows.expectedBase.test.js`.
 - **Sequence publish precondition + Casey publish card (A18.3, 10-28):**
   `POST /sequences/templates/:id/publish` takes the same optional
   `expected_base` `{draft_version, step_count, draft_fingerprint}`, checked
@@ -1036,17 +521,9 @@ body. Governing migrations in `ref/migrations/`.*
   `lib/versionDiff.sequenceDraftFingerprint` — ordered
   `sequenceStepFingerprint`s PLUS the draft version row's
   `template_condition` (the PUT route writes that onto the draft without
-  moving `draft_version` or any step). Kind `sequence.publish.v1`: the card
-  is server-computed with draft-diff's own functions (`diffSequenceSteps`,
-  the route's exported `validateSequenceDraft`); `migrate_in_flight` pinned
-  false, so a Casey publish repoints NO enrollment — running ones finish on
-  their pinned version, no queued job is rewritten. No sequence action type
-  carries runnable code; the type inventory is pinned and an unknown stored
-  type refuses the card. Flag `casey_sequence_authoring_enabled` (covers
-  both sequence kinds). The native sequence editor sends no token
-  (ref/plans.md). Tests: `tests/caseySequencePublish.test.js`, gated
-  `tests/caseySequencePublish.mysql.test.js`; plan:
-  ref/ASK_CASEY_ACTIONS_PLAN.md A18.3.
+  moving `draft_version` or any step). (Casey v1's `sequence.publish.v1` card
+  over it went at S6.) The native sequence editor sends no token
+  (ref/plans.md). Tests: gated `tests/sequences.expectedBase.mysql.test.js`.
 - **Workflow start idempotency + Casey start card (A17.7, 10-28; reviewed
   input A17.7b, 11-03):**
   `POST /workflows/:id/start` takes an optional `Idempotency-Key` (scope
@@ -1055,322 +532,11 @@ body. Governing migrations in `ref/migrations/`.*
   contact_id) releases the claim; a 5xx or lost commit ack keeps it, so a key
   can never start a second run. A replay answers the FIRST run's body with
   `replayed: true` and advances nothing. No key = unchanged, zero extra
-  queries. Kind `workflow.start.v1`: the model supplies `workflow_id`
-  + evidence and optionally `init_data` / `contact_id`; Casey starts the
-  PUBLISHED version only (`use_draft` refused by name, unexpressible by the
-  fixed builder). No input (absent or `{}`, no contact) = the shipped card
-  and body `{init_data: {}}`, byte-identical; the card lists the
-  `{{placeholders}}` no step sets, which resolve blank. A17.7b input:
-  `init_data` only (`initData` / `input` refused by name), a CLOSED key set
-  = the published version's unset placeholder roots ∪ `workflows.test_input`
-  keys (`workflowStartAllowedKeys`; never `this`/`env`, dotted or other
-  non-root names, prototype names — the set cannot see a safe code step's
-  returned variables, so it may over- or under-list), SCALAR values only
-  (objects/arrays refused: provider envelopes are forgeries, not inputs;
-  strings ≤500 chars, no control / line-break / bidi chars), ≤20 keys; a
-  contact only from a cited row carrying that contact_id — explicit
-  `contact_id`, or the value `default_contact_id_from` would bind (precedence
-  via the engine's `resolveExecutionContactId`; two different contacts
-  refused). The card shows each value verbatim with the steps reading it,
-  the contact binding, the blank-list minus the payload; `payload` is the
-  exact body the builder sends (re-checked, never rebuilt). Refused: inactive, never published, a STANDARD-mode code
-  step in the published version (`standardCodeStepNumbers`, shared with
-  A17.6). The card shows effects (shared with publish), starters, in-flight
-  runs (`pending|active|processing|delayed|held`, any version), 90-day
-  volume. Click-time precheck re-reads `GET /workflows/:id` (active,
-  `current_version` unchanged — a published version's steps are never edited
-  in place). Ledger receipt `execution_id`; the applied card deep-links to
-  the run via `ycAssistantNavigate('automations.workflow', {id, record:
-  'execution'})` → rest `workflows~<id>~execution` (closed `records` list in
-  the shell, `ASSISTANT_SECONDARY_RECORDS` in the manager). Own off switch
-  `casey_workflow_start_enabled` (a start executes, authoring flags do not
-  cover it). No yc-sync matcher (no workflow route has one; the run's own
-  writes are server-side). Tests: `tests/caseyWorkflowStart.test.js`, gated
-  `tests/caseyWorkflowStart.mysql.test.js`; plan:
-  ref/ASK_CASEY_ACTIONS_PLAN.md A17.7.
-- **Casey enroll card (A18.4b, 10-28; reviewed trigger_data A18.4c,
-  11-04; e-sign scope A18.4d, 11-04):** kind `sequence.enroll.v1` over the
-  A18.4a-hardened `POST /sequences/enroll` (`Idempotency-Key` = draft_id,
-  scope `sequences.enroll`). No `trigger_data` (or `{}`) = the shipped card
-  and body `{contact_id, template_id, trigger_data: {}}`, byte-identical.
-  A18.4c: `trigger_data` only (`triggerData` / `payload` / `input` and
-  top-level `appt_id` / `signing_request_id` / `case_id` / `template_type`
-  refused by name); a CLOSED key set (`sequenceEnrollAllowedKeys`: what the
-  published version reads — `{{trigger_data.X}}` in configs / placeholder
-  `delay.at`, condition params, `appt_time` + `appt_id` where `before_appt*`
-  timing or `min_hours_before_appt` reads it, `appt_id` / `case_id` /
-  `appt_with` where a step reads `{{appts|cases|users.*}}` — ∪ the
-  template's `test_input` and `captured_input` keys; it cannot see what a
-  started workflow, a webhook receiver or an internal function does with a
-  value); scalar values, A17.7b's caps reused; refused inside it by name:
-  `user` / `user_id` (no user-id evidence row shape), `task_id`, `contact_id` /
-  `contact`, prototype names. Ids are evidence-bound and contact-consistent:
-  `case_id` cited + linked to the contact (`case_relate`); `appt_id` cited +
-  the appointment's `appt_client_id` IS the contact (both named on a
-  mismatch) — it makes the enrollment APPOINTMENT-scoped; with it,
-  `appt_time` must be that appointment's instant (firm-local naive
-  `appt_date` → UTC), `appt_with` its provider, `case_id` its case. The
-  preview and walk run WITH the payload; the duplicate predicate and the
-  click-time re-check use the scoped identity (`appt_id <=> ? AND
-  signing_request_id <=> ?`). A18.4d: `signing_request_id` (a number, never
-  beside a truthy `appt_id`) cited ONLY from a typed `esign.requests` row
-  (`assistantService.esignRequestsRead`: a contact's or a case's requests,
-  allow-listed columns — never recipients / provider_id / raw_payload /
-  placement_json / PDF paths / completion_targets — each row's `contact_id`
-  the REMINDER contact via `esignPrefillService.buildContext`, finished
-  requests returned marked) makes the enrollment E-SIGN-scoped; mirrored from
-  `esignSendService._tryEnrollReminders`: reminder contact IS the contact,
-  status in `OUTSTANDING_STATUSES` (a terminal one never transitions again; a
-  draft is unsent), the `seq_instance_id` pointer names no ACTIVE enrollment
-  (a finished one is replaced), `document_name` / `tracking_id` / case-linked
-  `case_id` the request's own. `POST /sequences/enroll` itself (any caller,
-  `esignPointerBase` / `writeEsignPointer`) refuses a missing / not-awaiting /
-  claimed request 409 before any row, then writes the pointer with ONE
-  conditional UPDATE (pointer still the base read, status still outstanding);
-  a miss or throw CANCELS the enrollment → 500
-  `SIGNING_REQUEST_WRITEBACK_FAILED` (`cancelled`), a failed cancel alerts IT.
-  So `applyStatus` cancels a chat-born e-sign chain on completion. The
-  card's click-time check re-reads `GET /api/esign/:id`. An armed
-  `capture_mode` (sequences have no intercept) puts `capture` on both cards.
-  Evidence must carry the template id
-  (`automation.definition`) AND the contact id. Refused: inactive /
-  never-published / empty / unreviewed-type template, missing contact, an
-  active enrollment of the same scope (the engine's `appt_id <=> ? AND
-  signing_request_id <=> ?` predicate), and a first-placement walk that
-  hits a timing error (the enroll would fail `SCHEDULING_FAILED`). The preview
-  is `sequenceEngine.previewEnrollmentSteps(db, {…, version: 'published'})` —
-  an additive, fail-closed option (the editor's default previews the DRAFT
-  when one exists; enroll runs `current_version`); the result carries
-  `version`. The card engine gained a family `knownOutcome(e)` hook: exact
-  status + `code` pairs map to refused (`ALREADY_ENROLLED` / `NEVER_PUBLISHED`
-  / `EMPTY_SEQUENCE` 409, `ENROLL_BUSY` 503) or a known failure
-  (`SCHEDULING_FAILED` 500, "nothing will send"), with `draft.refusal_status`
-  overriding the chip; idempotency bodies and uncoded errors fall through to
-  unknown. Receipt `enrollment_id`; deep link `sequences~<id>~enrollment`
-  (shell `records: ['enrollment']` on `automations.sequence`, manager
-  `ASSISTANT_SECONDARY_RECORDS.sequences`). Off switch
-  `casey_sequence_enroll_enabled`, on unless `'0'` like every Casey flag
-  (Fred, 2026-10-28: ONE polarity for all of them — a flag that must START
-  dark gets an explicit '0' row seeded at land time, never an inverted code
-  default; it first shipped dark-unless-'1' and was normalized same day).
-  No yc-sync matcher (the enroll route has none; nothing watches
-  `signing_requests`).
-  Tests: `tests/caseySequenceEnroll.test.js`, gated
-  `tests/caseySequenceEnroll.mysql.test.js`; A18.4d
-  `tests/caseySequenceEnrollEsign.test.js`, gated
-  `tests/caseySequenceEnrollEsign.mysql.test.js`; plan:
-  ref/ASK_CASEY_ACTIONS_PLAN.md A18.4 (A18.4d).
-- **Casey relation/role cards + `contact.relations` read (A6, 10-28):** the
-  relation/role tables are NOT in the report manifest (so not in `sql.read` or
-  the yc_report grants); the typed read `contact.relations {contact_id}`
-  (app pool, `contactRelationsRead`, P12 precedent) returns `row_type`-tagged
-  rows: relations from that contact's view (`relation_id`, both ids + names,
-  `reads` / `reads_reverse` = "A: <forward_label> B" / "B: <reverse_label> A"),
-  roles (`role_id`, attrs JSON), and both ACTIVE registries. Kinds
-  `contact.relation.create/update.v1` (POST/PATCH `/api/contact-relations`)
-  and `contact.role.create/update.v1` (POST/PATCH `/api/contacts/:id/roles`).
-  Invariants: type / role code resolved in the registry (general_ci — the card
-  carries the registry spelling), unknown/retired refused listing live codes;
-  one relation per pair+type in EITHER direction, active or not (stricter than
-  the route, which stores the reverse of an asymmetric type); update keeps the
-  record ACTIVE — `active` / `end_date` / `end_reason` (ending = the deferred
-  remove), `type_code`, either contact id, role `active` / `role` refused by
-  name; role attrs through `contactRoleService.validateRoleAttrs` (omitted =
-  null, still validated); role update is a COMPLETE replacement (dropped keys
-  listed; no-change compare is key-order-insensitive — MySQL JSON reorders);
-  notes capped at 500 (varchar). `getRelation` names only contact B — the
-  normalizer reads both contacts. No Idempotency-Key (one ledger claim per
-  draft + the routes' UNIQUE keys; residual race: two cards for the opposite
-  orders of a SYMMETRIC pair, the reverse check being app-level). Click-time
-  precheck re-reads the native GETs. Both route families are on yc-sync
-  (`relations:contact:<id>` / `roles:contact:<id>`, the bullet below). Receipts `relation_id` / `role_id`; card opens
-  the contact. Off switch `casey_contact_relations_enabled` (on unless '0').
-  Tests: `tests/caseyContactRelations.test.js`, gated
-  `tests/caseyContactRelations.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A6.
-- **Casey case-notes / case-alerts / contact-notes cards (A7 group A, 10-28):**
-  kinds `case.notes.update.v1`, `case.alerts.update.v1` (PATCH
-  `/api/cases/:id`) and `contact.notes.update.v1` (PATCH `/api/contacts/:id`);
-  the column comes from the KIND and the browser body carries that one column
-  only (both routes accept far more — Casey's table `RECORD_TEXT_FIELDS` is the
-  narrowing). Invariants: the model gives `value` (complete text, `''` clears)
-  XOR `append`; the normalizer resolves either to the FULL after-value (append
-  = stored text byte-for-byte + newline + text) and bakes the whole current
-  value into `expected`; the click-time precheck re-reads the native GET and
-  compares by VALUE (cases has no updated_at; `contact_updated` moves on
-  unrelated writes). Caps on the whole result: notes = `lib/noteLimits`
-  NOTE_MAX_CHARS (the route's own 400), alerts 5000 (TEXT, no server cap — the
-  case-detail forms' maxlength). Reads go through `caseService.getCase` /
-  `contactService.getContact` (no SQL of its own, so no twin). The case
-  receipt is the STRING `case_id` (varchar(20) PK): the ledger's
-  `STRING_RECEIPT_FIELDS` and the engine's family `stringReceipt` flag carry it
-  — the case families' receipt (A7c, A9, A11.1 and A7 groups B/C share it); every
-  other family stays a positive integer. No
-  Idempotency-Key (setting a value is idempotent; one ledger claim per draft;
-  a contact replay re-pushes Google Contacts, harmless). Both routes are
-  already on the sync bus and case.html / contact.html / checklistView repaint
-  these columns. Off switch `casey_record_edits_enabled` (on unless '0').
-  Tests: `tests/caseyRecordText.test.js` + assistantUi; plan: ASK_CASEY_ACTIONS_PLAN A7.
-- **Casey case-contact membership cards (A8, 10-28):** kinds
-  `case.contact.add.v1` (POST `/api/cases/:id/contacts` {contact_id,
-  relate_type}), `case.contact.update.v1` (PATCH `…/contacts/:contactId`
-  {relate_type}), `case.contact.remove.v1` (DELETE it). The native routes
-  guard only the (case, contact, type) UNIQUE key + triggers — the PATCH is raw
-  SQL in the route, validates nothing (a non-enum type stores '' under the
-  relaxed sql_mode) and emits no domain event — so the normalizer is the guard,
-  fail closed: a PORTAL USER — any `portal_access_log` row, PIN requests
-  included on purpose (`caseService.getCaseContacts` carries it per row as
-  `portal_used` 0/1; anything but an explicit 0 counts) — never leaves
-  Primary/Secondary by demotion or removal, whatever `portal_enabled` says
-  (CLAUDE.md portal rule; usage, not the DEFAULT-1 flag that refused
-  everything — manager ruling 2026-10-29); anyone else may, with a danger
-  warning (none when `portal_enabled` is 0); a case's
-  only Primary never leaves (a second Primary is allowed, danger-warned — the
-  swap path); a case's last contact is never removed; a pair with two rows
-  (PATCH/DELETE act on EVERY row of the pair) is refused, and so is an add for
-  a pair already on the case; an add for a case_id over 8 chars refuses
-  (`case_relate_case_id` is varchar(8) — the route would store it truncated).
-  Evidence: add = rows with the exact case_id and contact_id; update/remove =
-  the case_relate row with the exact `case_relate_id` (sql.read — the table is
-  in the curated manifest, no typed read). Freshness: `expected` = the case's
-  whole membership set + the portal flag + (change / remove) `portal_used`;
-  the click-time precheck re-reads GET
-  `/api/cases/:id/contacts` and GET `/api/contacts/:id` and refuses on any
-  difference before the claim. Outcomes: the add's 409 "already linked" and a
-  change/remove 404 "Relationship not found" are before-write refusals
-  (family `knownOutcome`). Receipt: the INTEGER `case_relate_id` (new row /
-  reviewed row / removed row) — not the case_id string path. No
-  Idempotency-Key. Sync: one yc-sync matcher marks `case:<id>` for all three
-  verbs; contact.html never hears it (native gap, ref/plans.md). Off switch
-  `casey_case_contacts_enabled` (on unless '0'). Tests:
-  `tests/caseyCaseContacts.test.js`, gated `tests/caseyCaseContacts.mysql.test.js`;
-  plan: ASK_CASEY_ACTIONS_PLAN A8.
-- **Casey pipeline-transition cards (A9, 10-29):** kinds
-  `case.pipeline.advance.v1` (the case's next main-lane stage — `upcoming[0]`)
-  and `case.pipeline.move.v1` ({stage}: a key or label of a stage of the case's
-  RESOLVED pipeline, both lanes), both POST `/api/cases/:id/pipeline/advance`
-  {stage: <stage_key>, note?} — `pipelineService.advanceStage`, the only
-  `case_stage_log` writer and the only automatic `pipeline_phase` writer. Never
-  the cases PATCH, never `/pipeline/move` (cross-pipeline membership: refused
-  by name — template_id / pipeline / case_type / case_subtype). The one
-  cross-template destination is the RETENTION crossing: an intake case into
-  its chapter pipeline's first active stage (main lane), via the route's
-  cross-phase key search, only when getPipeline's R2.5 projection is source
-  'subtype' on the same template `resolveMatterTemplate` picks — a blank /
-  unmatched subtype under an is_default template is refused (the route WOULD
-  file it there; twin-pinned). THE ROUTE HAS NO REQUIREMENT GATE, so the
-  normalizer is one, fail closed: a REQUIRED requirement in status
-  active/upcoming that the move turns 'skipped' (resolver rule 3: stage_number
-  below the destination in its template, or every intake step on the
-  crossing) refuses the card and is listed verbatim — EXCEPT onto an
-  off-ramp-lane stage of the same template (off-ramp = exit, Fred
-  2026-11-01): there the open required steps are a danger warning, carried in
-  `expected.required_open`; a RECOVERY (off-ramp → main lane) likewise warns
-  on the required steps below its destination still 'skipped'
-  (`expected.required_skipped`); optional ones are disclosed; a step back
-  passes none. NO override pathway on these cards: a draft key
-  matching override/skip/force/requirement/… refuses by name before any read
-  and points at A9.4's own override card (§0). Refused too: a
-  case-phase case resolving to Intake (would flip it back to intake), advance
-  from an off-ramp / past the last stage, a later stage of a chapter pipeline
-  not yet entered, an all-digit stage key (the route reads it as a numeric
-  id). Downstream automation: the exact `case.stage_advanced` envelope
-  (`domainEvents.buildEnvelope`; extra.from_template_id from the latest log
-  row — the family's one SQL) is dry-run per active rule
-  (`triggerService.listActiveRulesForEvent` + `evaluateDraft`, preview lane,
-  nothing dispatched); a rule that cannot be evaluated is "MAY run" and
-  danger-styles the card. Freshness: `expected` = template id + current
-  stage_key + history length + phase/type/subtype + the passed-over
-  requirement signature; the click re-reads GET `…/pipeline?requirements=1`
-  (recomputing the blockers — a newly unmet step refuses by name; onto an
-  off-ramp the open set must equal the disclosed one) and GET
-  `/api/cases/:id`. Idempotency: none added — advanceStage is idempotent per
-  destination (same key + template as the latest row → noop, no row, no
-  event, under its per-case GET_LOCK; twin-pinned), and the ledger allows one
-  claim per draft; the noop and the lock's 409 read as refusals
-  (`knownOutcome`). Receipt: the STRING case_id (the route never returns the
-  case_stage_log id). Sync: the advance matcher carries `changes` (the four
-  overwritten columns) — case pages and the board repaint; nothing added. Off
-  switch `casey_case_pipeline_enabled` (on unless '0'). Tests:
-  `tests/caseyPipeline.test.js`, gated `tests/caseyPipeline.mysql.test.js`;
-  plan: ASK_CASEY_ACTIONS_PLAN A9.
-- **Casey reads a case's pipeline (A9.2, 11-09):** typed read kind
-  `case.pipeline` {case_id} → `assistantService.casePipelineRead` on the app
-  pool (the pipeline tables are outside the report manifest): `caseService
-  .getCase` + `pipelineService.getPipeline(db, <stored case_id>, {requirements:
-  true})` — the case page's GET `…/pipeline?requirements=1`. Rows: a head
-  (phase, resolved template, current stage, `next_main_stage_key`, last
-  transition, `phase_mismatch`, note), one `stage` row per stage (both lanes,
-  is_current, upcoming, times_entered), one `requirement` row per step (the
-  resolver's status and override verbatim), `projected_stage` rows (R2.5,
-  intake-resolved only); cap 50, stated. Invariants: pass the STORED case_id —
-  getPipeline keys steps by the id it is given, so a mis-cased id reads no
-  steps; no stage_id in the rows; unknown case = a `not_found` row with the
-  route's 404 wording; posture never wider than the route (execute is
-  staff-JWT only). Tests: `tests/caseyPipelineRead.test.js`, gated
-  `tests/caseyPipelineRead.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A9.2.
-- **Casey checklist cards (A10, 11-01):** kinds `checklist.create.v1` (POST
-  `/checklists` {title, kind, body?, link_type, link, items?}),
-  `checklist.item.add.v1` (POST `/checklists/:id/items` {name}),
-  `checklist.item.update.v1` (PATCH `/checkitems/:id` {name?, status?}) — the
-  Notes & Lists routes, mounted at the ROOT (not `/api`), SQL in
-  `routes/api.checklists.js`, bare `jwtOrApiKey`. The routes check shape (note
-  vs checklist), note body length and a staff `tag`, but not the parent's
-  existence, the varchar(255) title / item-name width (clipped silently) or a
-  duplicate item name — the normalizer does, fail closed. Refused by name:
-  `tag` / `position` anywhere (before any read); a CASE list titled "Docs
-  Needed" (folded like general_ci — the portal's docs predicate is
-  `tag='docs_needed' OR title='Docs Needed'`, so the title alone makes the
-  client-facing docs list; that list is upsert-items' alone); a bill list
-  (A10X released the colleague / appt / event / task / unlinked targets — the
-  A10X bullets below); a note with items / a checklist with a body; > 25 initial items;
-  duplicate item names (trimmed, case-insensitive); item cards on a note.
-  Disclosed: a duplicate title (warning); an item on a
-  case's DOCS list is CLIENT-VISIBLE (portal + unauthenticated
-  `/api/public/docs/:caseId`) — the flag is the portal predicate run by the
-  engine in the normalizer's list read; a list it reopens. The update mirrors
-  the route's emits (completing an item → `checkitem.completed`; the derived
-  list status → complete → `checklist.completed`; a NULL stored status never
-  transitions) and dry-runs each against the active rules (A9's
-  `casePipelineAutomation`, now parameterized by event). Evidence: exact
-  case_id / contact_id (create; none for a personal list), `checklist_id`
-  (item add), `checkitem_id` (update) — sql.read, both tables are in the
-  manifest. Freshness: the record's list ids, or the list's
-  title/kind/link/tag/status + every item's id:status:name, re-read at the
-  click (GET `/checklists?link_type=&link=` / GET `/checklists/:id`). Receipts:
-  integer `checklist_id` (create, item add) / `checkitem_id` (update) — two
-  browser families. No Idempotency-Key. SYNC (new): yc-sync announces the
-  three writes as `checklist:<link_type>:<link>` (PATCH `/checkitems/:id`
-  answers the item row plus an additive `checklist` {id, link_type, link}
-  echo for it); checklistView.html subscribes to `checklist:*`, reloads for
-  its record and its case's contact groups, fenced on its own echo and parked
-  while hidden or typed in. Off switch `casey_checklists_enabled` (on unless
-  '0'). Tests: `tests/caseyChecklists.test.js`, gated
-  `tests/caseyChecklists.mysql.test.js`, `tests/checklistView.sync.test.js`;
-  plan: ASK_CASEY_ACTIONS_PLAN A10.
-- **Casey list edits and deletes (A10.2, 11-11):** same switch, three kinds on
-  the Notes & Lists page's own routes — `checklist.update.v1` (PATCH
-  `/checklists/:id` {title?, status?, body?}; status / body on a NOTE only, the
-  route's rule), `checklist.delete.v1` (DELETE `/checklists/:id`, items by the FK
-  cascade) and `checklist.item.delete.v1` (DELETE `/checkitems/:id`, which
-  recomputes the derived status and may emit `checklist.completed`). Reorder
-  is its own kind (A10X, next bullet). Refused by name:
-  `tag`, `position`, `list_kind`, `link` / `link_type`, `items` (update). The
-  title width is read from information_schema (characters); a rename into
-  "Docs Needed" on a case is refused, out of a title-only docs list warned.
-  Another user's personal list is refused — except a delete by a SUPERUSER
-  (users.roles via `rowIsSuperuser`, mirroring `mayDetachPersonal`), warned.
-  Deletes always carry NO UNDO + counts. Invariant: a delete / item delete
-  re-runs the REAL `requirementService.resolveRequirements` over
-  `checklistProjectedDb` (this list dropped, or its status + item counts
-  replaced, in the `checklist` detector's two reads; shape-guarded, fail
-  closed) and names each pipeline step whose status moves (danger). The
-  click re-reads GET `/checklists/:id` incl. the note TEXT. Receipts:
-  `checklist_id` (update, delete) / `checkitem_id` (item delete) — the
-  reviewed row (the DELETEs echo only the record's address, for the bus).
-  SYNC: all three routes are on yc-sync (`checklist:<link_type>:<link>`, the
-  sync-bus bullet below). Tests:
-  `tests/caseyChecklistEdit.test.js`, gated
-  `tests/caseyChecklistEdit.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A10.
+  queries. (Casey v1's `workflow.start.v1` card — the closed `init_data` key
+  set, scalar values, the cited contact — went at S6, 2026-11-24.) No yc-sync
+  matcher (no workflow route has one; the run's own writes are server-side).
+  Tests: `tests/workflowsStart.idempotency.test.js` (the route's key cases,
+  ported from the v1 suite at S6).
 - **Atomic item reorder + its Casey card (A10X, 11-15):** NATIVE route PUT
   `/checklists/:id/items/order` {item_ids} (routes/api.checklists.js, bare
   `jwtOrApiKey` — the item routes' gate): `item_ids` = EVERY item once, in the
@@ -1382,311 +548,15 @@ body. Governing migrations in `ref/migrations/`.*
   reorder serialize (a reorder that meets an uncommitted add waits, then 409s).
   Answers the list in its new order; no event; status untouched; on yc-sync
   (`checklist:<link_type>:<link>`). The Notes & Lists page has no reorder
-  control — Casey's `checklist.items.reorder.v1` (same switch) is the UI: every
-  item before → after, refused for a note / < 2 items / a set not the list's /
-  a no-op; `expected` adds the ORDER, re-read at the click (GET
-  `/checklists/:id`); the 409 is a refusal; receipt `checklist_id`. Tests:
-  `tests/caseyChecklistOrder.test.js`, gated
-  `tests/caseyChecklistOrder.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A10.
-- **Casey list targets released + the docs-list upsert card (A10X, 11-15 —
-  "release means allow"):** every checklist card but the list DELETE works on
-  an ACTIVE colleague's personal list (create with link_type 'user' + their
-  id; owner named on the card, NOT told — the route sends nothing; a retired /
-  inactive / missing owner refused by `taskService.findAssignableStaff`'s
-  predicate and at the click by GET `/api/users/:id`, `user_auth` /^authorized/
-  and `user_type` ≠ 0); the delete keeps A10.2's superuser rule. Lists on an
-  appointment / event / task: named from the row, cited by the exact appt_id /
-  event_id / task_id, re-read at the click through GET
-  `/api/appts|events|tasks/:id` (not for a delete). Unlinked lists:
-  link_type "none" → no link sent (route stores NULL / NULL), no record
-  re-read, and NO bus address (checklistGetter fails closed — the cards say
-  so). A BILL stays refused (no bills table or read route). New kind
-  `checklist.items.upsert.v1` {case_id, items} → POST
-  `/checklists/upsert-items` (the sending form's route): the card evaluates
-  the route's FIND_DOCS_SQL (verbatim copy) and computes its exact diff —
-  each new item drops THE existing item sharing its first 22 characters (JS
-  substring, case-sensitive), every new item inserted unchecked at i+1 (the
-  list after in GET order, position NULL first) — and refuses what would
-  surprise: two new items sharing a prefix, a prefix matching two items (the
-  route's unordered read picks one), a capitalisation near-duplicate.
-  Warnings: CLIENT-VISIBLE, ASKS AGAIN (a checked item replaced unchecked),
-  REOPENS, CREATES / TAGS, NOT ONE STEP (the route has no transaction — a
-  failure reads as possibly part-applied), and AUTOMATION naming every ACTIVE
-  rule on `checklist.items_upserted` (`casePipelineAutomation` now also
-  returns `rules` {id, name}). `expected` = every case checklist's id:tag:title
-  (what decides the find) + the docs list's status + items; re-read at the
-  click (GET `/checklists?link_type=case&link=&kind=checklist&include=items`
-  + GET `/api/cases/:id`). Receipt `checklist_id`. SYNC: POST
-  `/checklists/upsert-items` is now on yc-sync (its answer's `checklist`
-  {link_type, link}, `checklistGetter(true)`) — also for the sending form's
-  browser call (sendingform-bk.html), which announced nothing before. Tests:
-  `tests/caseyChecklistRelease.test.js`, `tests/caseyChecklistUpsert.test.js`,
-  gated `tests/caseyChecklistRelease.mysql.test.js`,
-  `tests/caseyChecklistUpsert.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A10.
-- **Casey document cards (A11, 11-02):** kinds `document.update.v1` (PATCH
-  `/api/documents/:id` {title?, doc_type?, tags?}) and `document.link.v1` (POST
-  `/api/documents/:id/links` {link_type, link_id, relation?}) — the Documents
-  page's routes, bare `jwtOrApiKey`. READ: `documents` + `document_links`
-  joined the report manifest (sql.read reads `documents.id AS document_id`);
-  `shared_link` is on `DENIED_COLUMNS` (a public link is a capability); the
-  `yc_report` grants follow the manifest, so `reportGrantUserProvision.js
-  --apply` runs BEFORE the deploy that ships a manifest table (header note in
-  the manifest). The service CLIPS over-width values silently (COLUMN_LIMITS;
-  tags after `normalizeTags`), no-ops an unchanged edit (trimmed, NULL = ''),
-  answers a repeat link `created:false` (general_ci UNIQUE — case-folded) and
-  the link route ignores status — the normalizer refuses each first. Refused by
-  name before any read: `status`, `name`, `path`, `external_id`,
-  `shared_link`; relation `path` (the sync's mark: its attribution sweep skips
-  a document holding a case link with it). Refused: non-active document,
-  width in code points, no-op, link type other than case/contact, a gone
-  target, an existing link, > 20 links (5+ disclosed). Disclosed: pending
-  delete, stored tag form, type new / on N documents, where a link shows
-  (`resolveRelatedTargets` — the Include-related predicate, one hop), the
-  first-case-link triage effect, a person's link surviving moves. Both dry-run
-  their service event (`document.updated` with `buildChanges` over the prior
-  row; `document.linked` with the target promoted) on the preview lane.
-  Evidence compares document_id NUMERICALLY (the report pool's
-  bigNumberStrings returns BIGINT as a string); a link cites the document row
-  AND the case_id / contact_id row. Freshness: title/doc_type/tags/status/
-  updated_at, or status + the whole link set, re-read via GET
-  `/api/documents/:id`. Receipts: integer `document_id` / `document_link_id`
-  (the POST's matching link row) — two browser families; `created:false` at
-  the write reads as a refusal. Sync: existing `document:` / `doclink:`
-  matchers, nothing added. Off switch `casey_documents_enabled` (on unless
-  '0'). Tests: `tests/caseyDocuments.test.js`, gated
-  `tests/caseyDocuments.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A11.
-- **Casey document share / unlink (A11.2, 11-11):** same switch, two kinds on
-  the Documents page's own controls — `document.share.v1` (POST
-  `/api/documents/:id/share`, Copy public link: Dropbox get-or-create of the
-  file's PERMANENT link — an existing direct link with its own settings, else a
-  new public one, no expiry — stored on `documents.shared_link`; the route
-  always asks Dropbox and ignores status) and `document.unlink.v1` (DELETE
-  `/api/documents/:id/links {link_type, link_id}`, the Links dialog's Unlink —
-  any link, the last one, any status). NO status kind: no screen sends one.
-  Invariants: the server reads only WHETHER a link is stored, never the link
-  (still on `DENIED_COLUMNS`); the browser keeps the route's link as a
-  NON-enumerable draft property — shown with a copy button, never in the chat,
-  the ledger or the model's history. Share refuses a non-active document;
-  unlink discloses it. Unlink names the tabs it leaves
-  (`resolveRelatedTargets` of the removed link minus what the remaining links
-  reach), LINKED TO NOTHING, the triage effect, and COMES BACK when the sync
-  re-adds a case link (`documentSyncService._matchCase` over the
-  `entity_folders` binding for the file's ancestors — the incremental path on any
-  change, `attributeUnlinked` when no case path link is left). Neither emits
-  an event. Freshness: GET `/api/documents/:id` (status, link presence, name /
-  title / type, links). Outcomes: share 404 + Dropbox's sharing 409 and unlink
-  404 "Link not found" are refusals. Receipts: the reviewed `document_id` /
-  `document_link_id`; families `docshare` / `docunlink`. Sync: existing
-  matchers. Tests: `tests/caseyDocumentShare.test.js`, gated
-  `tests/caseyDocumentShare.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A11.2.
-- **Casey docket adopt (A7c, 11-02):** kind `case.docket.adopt.v1` → PATCH
-  `/api/cases/:id/docket` {case_number?, case_number_full?} (the court-review
-  adopt writer, bare `jwtOrApiKey`; never the cases PATCH). Fills a BLANK
-  docket only: the route 409s a column holding a DIFFERENT value (trimmed, JS
-  exact — capitalisation counts) and a value another case holds in either
-  column (`checkCaseNumberCollision`, general_ci + PAD SPACE equality, no shape
-  parse) — the normalizer refuses both first, through the same rule / the same
-  function. The route 400s > 20 characters (since 11-09) and checks no
-  control characters — the normalizer refuses > 20 code points and any
-  C0/DEL/C1/U+2028-9. Refused by name before any read: replace / clear keys and
-  any other case field. A column already holding the value is not sent.
-  Disclosed, each reader by its own rule: header (`full || number`), Cases list
-  (`COALESCE(NULLIF(full,''), NULLIF(number,''), case_id)` since 11-09),
-  portal `deriveDocket`, Documents badge (`_labelTargets`), court-email matching
-  (`courtResolve`) + the empty-caption stamp, templates, the events / log rows
-  already filed under the number that join the case, the judge link updateCase
-  re-resolves when the full number is written (a changed existing link is a
-  danger warning), and `case.updated` (source `docket_adopt`, updateCase's own
-  envelope) dry-run on the preview lane. Freshness: both columns as stored
-  (NULL ≠ ''), case_type, + case_judge / case_judge_contact_id with a full
-  number (cases has no updated_at), re-read via GET `/api/cases/:id`. Both 409s
-  and the 404 read as refusals. Receipt: STRING `case_id`. Sync: the existing
-  docket matcher. Off switch `casey_case_docket_enabled` (on unless '0'). Tests:
-  `tests/caseyDocket.test.js`, gated `tests/caseyDocket.mysql.test.js`; plan:
-  ASK_CASEY_ACTIONS_PLAN A7c.
-- **Casey case fields (A7 groups B/C, 11-09):** kind `case.fields.update.v1`
-  → PATCH `/api/cases/:id` {<column>: <value>, …} (updateCase, whose BLOCKED
-  set is exactly case_id — Fred: "any field except case_id, just like the
-  user"), 1–10 columns per card, behind `casey_record_edits_enabled`. Refused
-  BY NAME before any read (`CASE_FIELDS_REFUSED`, any capitalisation; the
-  browser builder holds the same set, pinned equal): case_id; the columns
-  another card owns — stage /
-  status / rec / pipeline_phase (A9), case_dropbox (A11.1), case_notes /
-  case_alerts (group A); the derived `*_contact_id` links; `custom` (cf_ keys
-  only); case_type / case_subtype are ALLOWED since A7d (11-09): a type change
-  clears the subtype as the case page does, the firm's `fe-case_types` list is
-  checked (unlisted = warning), and the pipeline the case resolves to before →
-  after is disclosed (`pipelineService.resolveTemplate`, a danger warning when
-  it changes — no stage-log row, no step check); case_341_current + 341_appt_id (apptService's
-  single-writer projection of the live 341 appointment, portal-visible). The
-  column map is LIVE information_schema; each value is normalized to its type
-  (DATE ISO, '' → NULL; DATETIME firm wall time sent as the form's
-  'YYYY-MM-DDTHH:MM'; ENUM exact; SET an array joined in member order; CHAR /
-  VARCHAR one line ≤ width in code points — the route clips silently and
-  answers 200; TEXT ≤ noteLimits / form maxlength / 10,000); another type
-  refuses. cf_ keys go through the route's own `splitCustomFields` (its 400
-  is the refusal). A column already holding the value is not sent; none left =
-  no-op. Disclosed per column: before → after, Clears (a removal of stored data
-  danger-styles), readers (code-measured surfaces — the CLIENT PORTAL reads
-  case_chapter, case_341_link, case_open_date — plus a live word-bounded REGEXP
-  scan of report / form-template / portal-card / pipeline-requirement /
-  sequence / workflow / ingest-action definitions; a JSON cast CONCAT_WS'd
-  with a general_ci column must COLLATE general_ci or REGEXP refuses the mix), the judge / trustee link updateCase
-  re-resolves (a miss writes NULL — a warning when a link existed), the 341
-  link a raw trustee change does NOT re-point (the Case Details form does it
-  client-side), and updateCase's exact case.updated envelope (source
-  'manual') dry-run — only when its buildChanges sees a change. Freshness
-  (A7 ruling 2's route precondition still deferred): touched columns as stored
-  + case_type / case_subtype (+ what a re-resolved link rests on) in
-  `expected` / `expected_kinds`, re-read via GET `/api/cases/:id`. A 4xx is
-  a refusal; 5xx ambiguous. Receipt: STRING case_id. Sync: the existing case
-  PATCH matcher. Tests: `tests/caseyCaseFields.test.js`, gated
-  `tests/caseyCaseFields.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A7 groups B/C.
-  A7e (11-09): the docket is on this card too (fill / replace / clear); the card runs `checkCaseNumberCollision`
-  at proposal, the click re-checks via GET `/api/cases/search`, and the PATCH itself refuses a collision (409) and
-  an over-width number (400) since 11-09 — `caseFieldsKnownOutcome` reads that 409 as nothing written; `caseFieldsDocketReview`
-  discloses the events / log rows that leave and arrive (counted in SQL), court email, displays, judge link.
-- **Casey forms (A12, 11-02):** kinds `form.draft.v1` → POST
-  `/api/forms/draft` {form_key, link_type, link_id, schema_version, data} and
-  `form.submission.link.v1` → PATCH `/api/forms/submissions/:id/link`
-  {link_type, link_id} (bare `jwtOrApiKey`). The draft route is `ON DUPLICATE
-  KEY UPDATE data = VALUES(data)` on `draft_key` (one draft per form + record,
-  general_ci): it REPLACES the whole payload, validates nothing, stamps the
-  body's schema_version (1 when omitted) — unless the body carries the
-  `expected_draft_id` + `expected_updated_at` precondition (§0, 11-11), which
-  the card sends. The normalizer checks every answer
-  against the PUBLISHED definition (`extFormService.buildValueRegistry`),
-  stores it the way yc-forms `collect()` would, and carries every existing
-  draft answer it does not set forward verbatim; the body's schema_version is
-  the template's. A typed read `form.template` {form_key, search?} (app pool —
-  form_templates is not in the report manifest) gives the field list and must
-  be in the investigation before a draft. Disclosed: answers before → after,
-  carried count, someone else's draft < 24 h (danger), RESTORE BLANKS (fields
-  the draft lacks show blank on Restore — danger), CLIENT-VISIBLE only for a
-  `public` template with `external.serverDrafts === true` (the D1 GET returns
-  any draft row for form + case). The link route 400s a draft, 409s an
-  already-linked row / another link type, 404s a gone submission / target,
-  renumbers to MAX + 1 of the target series, writes one `form` log entry,
-  stamps `case_intake_form` for `intake` only when `''`; the normalizer
-  refuses those first plus a template-less form, and compares the answers'
-  name / phone / email with the target's people (a mismatch is a danger
-  warning). Freshness: draft id + updated_at + SHA-256 of the canonical stored
-  JSON / the submission's status + link + version, re-read at the click.
-  Receipt: integer `submission_id` (both). Sync (new): both routes announce
-  `form:<link_type>:<link_id>` (the draft POST echoes form_key / link_type /
-  link_id additively); `YCForm._setupSync` refetches, never repopulates a
-  dirty form and holds its autosave while a newer draft waits; render.html
-  loads yc-sync in internal mode only, the hand-built pages by a static tag.
-  Off switch `casey_forms_enabled` (on
-  unless '0'). Tests: `tests/caseyForms.test.js`, gated
-  `tests/caseyForms.mysql.test.js`, `tests/formRender.sync.test.js`; plan:
-  ASK_CASEY_ACTIONS_PLAN A12.
-- **Casey form discard / PDF filing / appointment records (A12.2, 11-11):**
-  same switch. `form.draft.delete.v1` {submission_id = the DRAFT row} → DELETE
-  `/api/forms/draft?form_key&link_type&link_id` (the draft banner's Discard),
-  built from the stored row; the route answers `{deleted}` (false = a
-  refusal) plus its query's `form_key` / `link_type` / `link_id`, and yc-sync
-  announces `form:<link_type>:<link_id>` only when a row was deleted — an
-  open copy of the form (render.html or a hand-built page) drops its banner.
-  `form.pdf.file.v1` {submission_id, filename?}
-  → POST `/api/forms/submissions/:id/pdf/file` (the Form Inbox's File): NOT
-  idempotent, and nothing records a filing, so the card counts active
-  `documents` named `LIKE '%(#<id>)%.pdf'` (the default core) as an ALREADY
-  FILED danger warning, never a refusal; it predicts formPdfService's file name
-  (firm-local date) and the placement ladder read-only (case folder from
-  the `entity_folders` binding's `path_lower` — never `path_display`; a case
-  with no folder gets one created; contact / appt / unlinked → the unsorted
-  bin with `_identityPrefix`); the draft render refusal is a 500 with an exact
-  message before any upload; the verdict's `temp_link` is never kept. Both A12
-  kinds take `link_type` 'appt' (record re-read GET `/api/appts/:id`; identity
-  = the appointment's client); no live template links to one (2026-11-11).
-  Submitting a stored draft is A12.3's card (above). Receipts: the reviewed
-  `submission_id`; families `form_discard` / `form_pdf`. Tests:
-  `tests/caseyFormDiscardPdf.test.js`, gated
-  `tests/caseyFormDiscardPdf.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A12.2.
-- **Casey mail triage (A13, 11-02):** kinds `mail.read.v1` → POST / DELETE
-  `/api/mail/messages/:id/read` and `mail.case_link.v1` → POST
-  `/api/mail/messages/:id/case-link` {case_id} (guard `jwtOrApiKey` +
-  `requireJwt`; the authority is the caller's mailbox READ grant through
-  `mailReadService.loadVisible` — 404 without it, no oracle). No draft
-  operation exists in the mail or phone hub and the phone hub has no read /
-  case-link route, so drafts and SMS triage are out (Casey says so; a draft is
-  never turned into a send). Mail is outside the report manifest (not added):
-  two typed reads run AS THE ASKING USER through mailReadService —
-  `mail.search` (`listMessages`; q / from / mailbox_id / unread_only / since /
-  folder, ≤ 20 rows, NEVER bodies; the case link is `linked_case_id`) and
-  `mail.message` (`getMessage`; headers + the first 2,000 chars of body_text
-  only, marked untrusted sender text) — audited as `admin_audit_log` tool
-  `mail_read` (ids only). Read card: refuses a no-op and COPIES (another
-  readable copy of the same RFC Message-ID still unread — the single route
-  marks one copy and the hub shows an email unread while any copy is);
-  discloses "for you only". Link card: predicts `caseLink`'s log row
-  read-only in its order (stamp → lowest-id copy's stamp → `priorLogId`, now
-  exported → create) and refuses first its 409s (sync still emitting,
-  store-only grace, dead stamp), the 422 (no address), a message already on
-  THIS case, and one on ANOTHER case — `setLogAbout` would silently MOVE it;
-  discloses reuse vs create (a created `email` entry copies the text — up to
-  50,000 chars — into the case's log, readable by every staff member on the
-  Log tab; the mailbox grant does not apply there; `log_message` varchar(10000)
-  keeps 10,000 and `log_data` TEXT 65,535 bytes — both cut silently, said /
-  danger), an about-link it replaces
-  (danger), the sender (outgoing: outside recipients) vs the case's contacts'
-  emails incl. ended rows (mismatch = danger, never a refusal), Comms tab yes,
-  portal never (it reads no log rows), no event. Freshness: read state / the
-  stamp + resolved log id + `contact_id:contact_email` set, re-read via GET
-  `/api/mail/messages/:id`, `/api/cases/:id`, `/api/cases/:id/contacts`.
-  Receipts: integer `mail_message_id` / `log_id`. Sync (new): both routes
-  announce `mail:<id>` with real values ({unread} / {log_id, case_id}), the
-  link also `comms:case:<case_id>`; comms.html and entityCommunications.html
-  now load yc-sync and subscribe (the first log-row announcement anywhere —
-  POST `/api/log` and PUT `/api/log/:id/about` still announce nothing; the
-  hub's unlink and bulk read announce since A13X, 11-16). Off
-  switch `casey_mail_triage_enabled` (on unless '0'). Tests:
-  `tests/caseyMailTriage.test.js`, gated `tests/caseyMailTriage.mysql.test.js`,
-  `tests/caseyMailTriage.panes.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A13.
-- **Casey case folder relink (A11.1, 11-03):** kind `case.folder.relink.v1` →
-  POST `/api/documents/relink` {case_id, folder_path} (the Documents relink
-  panel's confirm, `documentSyncService.applyRelink`, bare `jwtOrApiKey`).
-  `folder_path` must equal byte for byte the `path` of a cited candidate row of
-  a typed read `document.relink.candidates` {case_id} of the SAME case
-  (`relinkCandidates` on the app pool, NEVER `includeWeak` — surname-only is a
-  different client nearly every time; the relink state stays out of the
-  report manifest), plus a `sql.read` row with the exact case_id. The panel
-  has no typed-path field and lists only its queue's cases; the read works for
-  any case. Refused by name first: bulk (quoting the route header), dismiss /
-  undo, unlink / clear, weak / force, free-typed path keys, any other key;
-  then: not a candidate, a gone case, the sync off (the route answers 200
-  `{result:{skipped:true}}`, nothing written), a candidate no longer listed,
-  `already_linked_to` another case (the route's 409 — `_loadFolderOwners`
-  path EQUALITY; a folder inside another case's folder is disclosed, not
-  refused), the case's current folder. The card predicts with applyRelink's
-  own predicates: attach = step 7's rows (active, under the folder, no case
-  path-link at all — add-only, ≤ 20,000) matched by `_matchCase` against the
-  cache with this case on the folder; detach = `reconcileCaseFolderLinks`'
-  clause (the case's relation-`path` links with no creator to documents
-  outside the folder); plus files held by other cases, nested-case files,
-  person-made links kept, the `case_dropbox` REWRITE (Dropbox's existing
-  direct link, else a new public one), FILING (portal / public uploads, form
-  PDFs, e-sign filings, `{{case_folder_link}}` steps follow the link), the
-  dismissal it clears, and NO UNDO (re-link the right folder, or unlink + clear
-  by hand; the log entry keeps old path + link). `case.updated` (source
-  `documents_relink`, `changes.case_dropbox`, the link a stand-in) dry-run on
-  the preview lane. Always danger-styled. Freshness: case link + cached path +
-  the candidate's path / files / owners, re-read via GET
-  `/api/documents/relink/:caseId/candidates`. Outcomes: `skipped` = refusal
-  (never success), the guard's 409 = refusal, 400 / 404 refuse (every 4xx is
-  pre-write), other 409 / 5xx ambiguous. Receipt: STRING `case_id` (family
-  `case_folder`). Sync (new): the route announces `case:<id>`
-  `{case_dropbox}` (value) and `doclink:case:<id>` (refetch); a skip announces
-  nothing. Off switch `casey_document_relink_enabled` (on unless '0'). Tests:
-  `tests/caseyRelink.test.js`, gated `tests/caseyRelink.mysql.test.js` (Dropbox
-  provider stubbed at its boundary only); plan: ASK_CASEY_ACTIONS_PLAN A11.1.
+  control: Casey v1's `checklist.items.reorder.v1` card was the UI (went at
+  S6); Casey v2 proposes the route as a card. Tests:
+  `tests/checklistsItemsOrder.mysql.test.js`.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL
-  (`open=firm:more~moreAutomations~workflows~27`); `assistantService`
-  derives and verifies `workspace.automation {kind, id, label}` (403 on a
-  dead id, like a dead case file). Keyed on the REST under any drill head —
+  (`open=firm:more~moreAutomations~workflows~27`); Casey v1 derived and
+  verified `workspace.automation {kind, id, label}` from it (went at S6; v2
+  carries the shell's context snapshot on the turn as data). Keyed on the REST under any drill head —
   a firm page `firm:<slug>` (More Features and Admin are `firm:more` /
   `firm:admin` since launcher-nits C4), tabPanel, or the old hub heads
   tabMore / tabAdmin an old link still carries — never under another tab's head. The segment also restores the open record
@@ -4261,8 +3131,8 @@ page holding its tile — `updateSidebarActive`). The tab id is per session and 
 never writes it and refuses it as a head. A FIRM page is named there by its
 item id instead — `?open=firm:<slug>[~panel~rest]`, a drill page
 (launcher-nits L4a; index.html `wsDrillSurface`), and Casey's
-workspace context accepts that head (`assistantService`
-`WORKSPACE_FIRM_PAGE_RE`, = uiConfigShape `FIRM_ID_RE`). A user's own page
+workspace context (the shell's `ycAssistantContext`, carried on the v2 turn)
+uses that head (v1 verified it against `FIRM_ID_RE`; went at S6). A user's own page
 never is: its id is made from the name they typed and the URL rides Referer
 into `jwt_api_audit_log` (Fred's ruling Q4 — F5 on it lands on Home). The class is `yc-hub`, NOT the design's `yc-page`:
 `/js/ycPager.js` owns `.yc-page` in the shell document. The drawer kind is
@@ -4518,395 +3388,26 @@ Tests: `settingsRegistry`, `settingsInventory`, `settingsAutomationGuard`,
 (`fe-event_types` and its dedicated editor retired in U9b-P4, 11-12); System
 draws runtime state as text, never controls.
 
-## 33. ASK CASEY / YISRAI — READ-ONLY INVESTIGATION AND REVIEWED ACTIONS
+## 33. ASK CASEY — v1 RETIRED (Casey v2 S6, 2026-11-24)
 
-**Surface.** The persistent bottom-of-sidebar Ask Casey control and the
-secondary More/All item both open one stable `public/assistant.html` iframe.
-Compact/wide/mobile presentations change CSS classes only; the iframe is never
-moved or recreated. Opening/collapsing it does not call `openMainTab` or URL
-sync, so the active workspace and canonical `open=` target remain intact.
-Staff JWT only.
-`POST /api/assistant/plan {question,history,model_mode,temporary_attachments?,document_ids?,workspace_context?}`
-returns a direct answer/refusal or
-a plan; the UI immediately sends its ticket to `POST /api/assistant/execute`.
-There is deliberately no confirmation for read-only operations. Plans are
-HMAC-signed with `JWT_SECRET`, expire after 20 minutes and are bound to the
-issuing user, so review and execution may land on different Cloud Run instances
-without trusting client-returned SQL.
+Casey v1 — `services/assistantService.js` (~106 typed card kinds, the plan /
+investigate / answer stages), `public/assistant.html`, `/api/assistant/*`, the
+`assistant_*` services and prompts, the 23 per-family `casey_*_enabled`
+switches (kept in `lib/settingsRegistry.js` as `retired` so no key is reused)
+and the `casey_v2_enabled` successor switch — was deleted at Casey v2 S6
+(`ref/CASEY_V2_DESIGN.md` §9 S6; Fred's parity sign-off 2026-11-24). Casey v2
+is the only Casey: §0's "Casey v2" entries and the design doc describe it
+(the loop, the tool layer, cards and the ledger `casey_cards`, Casey Notes,
+the flag-for-review, the superuser review, the MCP server). What stays of v1:
+the three tables `assistant_chats`, `assistant_chat_messages`,
+`assistant_action_ledger` (nothing reads or writes them; the S6c drop after
+a soak), the `assistant_%` `consumer_ref` family in `ai_calls` (history, still
+counted by the one monthly cap), `report_runs` rows with `report_key
+'assistant_chat'`, and the lessons folded into v2's rules
+(`lib/caseySqlRules.js` is v1's SQL rule set; `services/casey/knowledge.js`
+is v1's manual index). The retired section's text is in git before the S6
+land (`git show 48e3cff:ref/AI_CONTEXT.md`, §33).
 
-**Workspace context.** `ycAssistantContext()` is a narrow collector over
-`currentOpenFilesUrl()` plus live shell labels; it does not reuse diagnostics.
-Its submitted `snapshot` contains only `v`, canonical `/index?files=&open=`,
-parsed file `{kind,id,rest}` records, and the parsed active file/tab. `ask=` and
-all other one-shot parameters are excluded; display labels remain outside the
-snapshot. The composer shows a removable chip and deep-clones the selection
-before its first await. `assistantService` re-parses the URL, requires the
-browser's parsed form to match, checks referenced case/contact rows, then signs
-the normalized snapshot into the user-bound plan ticket. Planning, the one
-repair pass, investigation, and answering receive that same immutable
-server-verified block in the SYSTEM segment (`aiService` `systemAppend`,
-after `{{var}}` substitution), never inside `<untrusted_user_input>`, so text
-typed into the question cannot forge it. It is evidence, never authority.
-
-**Semantic navigation.** The first allowlisted destination is
-`automations.court_review`. The shell checks `moreAutomations` in the effective
-launcher registry, holds `courtReview` for the cold manager iframe, opens via
-`ycLauncher.exec`, and resolves only after `automationManager.html` reports its
-Court Review child loaded. An already-loaded manager uses the same narrow
-bridge. The assistant cannot submit selectors, coordinates, URLs, or script.
-
-**Automatic operation vocabulary.** Enabled kinds: `sql.read`, `manual.search`,
-`comms.search`, `weather.lookup`, and the typed automation reads (P12,
-workflows AND sequences; A20.0, email/phone ingest rules):
-`automation.list` / `automation.definition` / `automation.run` /
-`automation.references`, each taking a workflow id, a sequence template /
-enrollment id, or an ingest rule / execution id, served by
-`services/automationReadService.js` on the
-app pool — the report pool's grants exclude the automation tables on purpose,
-so the projection is the only path and carries the redaction (webhook and
-ingest `http` URLs → method + host + credential label; `resolved_config`,
-`action_config_resolved` and ingest `raw_input` never selected;
-`email_ingest_sources` never touched; `output_data` verdict keys only; code
-bodies readable per the 2026-10-22 ruling). Two dry-run kinds execute
-nothing: `automation.preview_step` (A17.2, `services/stepPreviewService.js`)
-and `automation.preview_ingest_rule` (A20.1, a STORED ingest rule's match and
-transform via `services/ingestRulePreviewService.js` — no dispatch, no
-execution row, no metrics bump, no rule body accepted). Weather is a narrow adapter that accepts
-only a location and constructs fixed Open-Meteo geocoding/forecast URLs in
-`assistantWeatherService`; it is not arbitrary web access. Unknown kinds fail
-closed. Reviewed writes are not automatic operations: the answer may return one
-closed Task, Event, Appointment, or contact-subrecord proposal, and only the
-signed-in user's confirmed browser action calls its ordinary application route.
-Compose/send email, field/form writes, and workflow draft/publish remain
-distinct future families and are not enabled by v1.
-
-**Bounded-loop invariant.** The first `assistant_plan` call sees the
-question/history and curated report schema, not rows, and emits the initial
-read plan. Rows are NOT kept from planning afterwards: the one-shot plan repair
-and `assistant_investigate` receive the accumulated evidence (marked
-untrusted) by design. So row text can steer which further READS run — within
-the hard budgets below, each read re-validated — but it can never cause a
-write: writes exist only as reviewed proposals the signed-in user confirms in
-the browser. The read boundary is the shared report validator (and the
-`yc_ro` pool behind it) plus this layer's own checks; it is only as strong as
-that validator. SQL is validated by the report validator at plan time, signed,
-revalidated from the ticket, then run
-through `reportService.execute` (SELECT-only pool, EXPLAIN/timeout/row caps and
-`report_runs` logging). The assistant layer additionally requires terminal
-LIMIT ≤50, bounds `log`/`email_log` by date and refuses conversational reads of
-SSN/EIN, DOB, tokens, attachments and delivery metadata (`ASSISTANT_DENIED`,
-scanned with string-literal contents blanked — a `LIKE '%password%'` search
-passes, the column name bare/backticked/in comments does not). `comms.search` calls
-`commsArchiveSearch` with the staff auth object, preserving phone-line grants,
-restricted-media rules and snippet caps. `manual.search` reads only shipped
-manual Markdown. Planner SQL explicitly collates both sides of text equalities
-to `utf8mb4_general_ci`, insulating generated joins from legacy general/unicode
-schema drift. `model_mode` is server-allowlisted: `better_quality` maps to
-`claude-opus-5`, while `faster_speed` maps to `claude-sonnet-4-6`; arbitrary
-provider model ids never cross the browser contract. The normal AI call ledger
-records the resolved model and remains cost-aware. Assistant
-SQL is retained in `report_runs` for developer diagnosis. If a SQL step hits
-MySQL's illegal-mix error, the EXPLAIN workload gate, or the deployed server's
-`LIMIT & IN/ALL/ANY/SOME subquery` incompatibility, the planner gets one repair
-attempt inside the same server request. The last
-case is rewritten as a direct ordered query or a JOIN to a limited derived
-table; raw database errors are not returned to staff after repair is exhausted.
-
-After each successful pass, `assistant_investigate` receives the immutable
-signed viewer/workspace context plus accumulated evidence marked as untrusted.
-It can return only `finish` or another read plan. Every follow-up is revalidated
-and assigned server-owned citation ids; normalized duplicate operations stop
-instead of running. The whole execute call owns the state—evidence and
-follow-up plans never round-trip through the browser. Hard budgets are three
-passes, eight attempted operations, 250 returned rows, 180 seconds, 7,000
-controller output tokens, the existing 60,000-character evidence cap, and one
-safe repair. The controller is also structurally limited to two calls; repair
-and answer retain their prompt-level 4,000/2,500 output caps. `assistant_answer`
-always writes the final response and is told the stop reason so it cannot imply
-an exhaustive search after a budget stop.
-
-**Staff roles and appointment time.** `users.roles` is exposed to this curated
-surface and is the canonical answer to staff-role/capability questions;
-`user_auth` is only login status and `does_appts` is only provider eligibility.
-The planner must not infer a job title from calendar activity. `appts.appt_date`
-and generated `appt_end` are naive wall times in `FIRM_TIMEZONE` (normally
-America/Detroit), while `appt_date_utc` is the real UTC twin. Because the mysql2
-pool runs with `timezone: 'Z'`, a raw local DATETIME can reach Node as a Date
-whose ISO rendering misleadingly ends in `Z`. The planner uses `DATE_FORMAT`
-with `*_local` aliases for display; the evidence compactor also labels raw
-appointment Date values as firm-local so the answerer cannot mistake that
-transport marker for timezone data. Planning context includes both real UTC and
-the current firm-local instant.
-
-**Current-user semantics.** Before each non-deterministic planning call,
-`assistantService.loadViewer` resolves the JWT's `userId` against `users` and
-loads only `user`, `user_name`, `user_initials`, and `roles`. The resulting
-server-verified `<current_staff>` block is supplied to the planner (system
-segment, as above), stored in the HMAC-signed ticket, and supplied again to
-investigation, repair, and answer.
-The browser cannot submit a viewer identity. Planner rules bind I/me/my/mine to
-that numeric staff id (for example `appts.appt_with = user_id`), never a display
-name or a similarly named contact. Old in-flight tickets without the block
-remain executable and fall back to their already-bound ticket owner id.
-
-Rows reach `assistant_answer` (whose contract has no operation/SQL shape) and,
-as untrusted evidence, the investigation controller and plan repair (read plans
-only); row text is data, never instructions. It returns plain text plus `{query_id,row_number}`
-citations that the service resolves against actual returned rows. Those
-resolved rows also expose typed shell actions for stable `case_id`,
-`contact_id`, `appt_id`, `event_id`, and `task_id` aliases; the UI dispatches to
-`addFile`, `showAppt`, `showEvent`, or `showTask`. Follow-up suggestions are
-`{label,query}` objects so display prose is never copied as the next question.
-Text found in an email/log/call may be evidence for a bounded follow-up read but
-is never instructions and cannot expand the original question. Initial planning,
-investigation, and answering use `logContent:false`; `ai_calls` keeps
-usage/cost/status, not client content.
-
-**State/history.** `assistant_chats` and `assistant_chat_messages` hold the 30
-most recently touched chats per `users.user`; every CRUD statement includes the
-authenticated user ownership boundary. Messages store displayed text and the
-assistant's structured citation/entity/suggestion payload, never SQL (that
-remains in `report_runs`). The model still receives at most the latest eight
-messages. The UI recommends a new chat at four user turns, while allowing the
-person to continue. A chat holds at most 200 messages (an applied-action
-marker gets 20 more so a result is never refused); the chat routes share a
-per-user 600/hour limiter. Migration:
-`ref/migrations/2026-10-19_yisrai_chat_history.sql`.
-
-**Spend and rate limits.** `assistant_ai_monthly_cap_cents` (registry: System
-→ Integrations, console-edited) is the firm ceiling: `plan` and `execute` sum
-month-to-date (UTC) `ai_calls.cost_cents` for `consumer_ref LIKE 'assistant\_%'`
-before any model call and refuse with 429 at the cap. Missing/blank = code
-default 20000 ($200); present but not a whole number = 0 (fail closed, as the
-comms cap). One request in flight can overshoot by its own cost. Plan/execute
-limiters (30/60 per hour) are per-process, so the cap — not they — is the
-cross-instance bound. Opus stays the `better_quality` default (Fred to rule).
-
-**Attachments.** `assistantAttachmentService` accepts at most four PDFs/images
-and 6 MB decoded bytes in aggregate, keeping the request under the app's 10 MB
-JSON ceiling. Browser-selected bytes are transient: the browser sends base64
-to plan and execute, the signed ticket binds SHA-256/name/media type, and chat
-history stores metadata only. Existing files arrive as numeric document ids;
-the service loads active rows through `documentService` and
-`documentSourceService` and binds `rev`/`content_hash`, refusing execution if
-the file changed after planning. All AI passes receive the files under
-`aiService`'s attachment injection guard. **Save to case** is deliberately not
-a model operation: an explicit user click reuses `/api/documents/upload-link`
-→ direct browser-to-Dropbox upload → `/api/documents/upload-commit`.
-
-**Reviewed task lifecycle.** `assistant_answer` may return one evidence-backed,
-server-normalized create, update, complete, cancel, reopen, or transfer proposal.
-The card is inert and visibly marked not applied. Its fixed **Review & …**
-control opens the shell's SweetAlert confirmation with the exact target and
-values, then maps only allowlisted fields to
-the corresponding existing authenticated `/api/tasks` route. The route sees
-the signed-in user as actor and preserves canonical audit, linking, reminders,
-and notifications. The model cannot choose the endpoint, method, or extra
-fields. Applied results reconcile from the user-scoped durable ledger on
-reopen; legacy proposals without a ledger row retain chat-result restoration.
-
-For `task.create.v1`, Casey requires assignee/title/description. Start is a
-not-before date and remains null unless requested; due is optional but suggested
-for a stated deadline. Completion notice defaults false for self-assignment and
-true otherwise unless explicitly specified. The fixed browser body stamps
-`source:'Casey'`, omits `from` so the route uses `req.auth.userId`, and omits
-`send_assignment_email` so canonical assignment email remains enabled.
-
-This is the governing Casey action pattern: the user performs the action by
-clicking a fixed control in their own authenticated browser. Prefer mapping
-normalized fields into an existing application endpoint so user permissions,
-actor identity, audit, and ordinary product semantics stay canonical. Treat a
-new Casey-specific action endpoint as an architectural exception that requires
-another design review, not the default way to add an action.
-
-Every new action review must also audit the sync/event bus. If the canonical
-write changes data visible in another frame or tab, its ordinary endpoint or
-service must provide the canonical bus/domain-event signal and response shape.
-Fix missing propagation for every caller; never add a Casey-only emit. The
-`/api/tasks` family currently has no `yc-sync` matcher, matching the native
-Tasks UI's established behavior; cross-frame task propagation belongs in a
-canonical Tasks/bus arc.
-
-**Reviewed Events lifecycle (Ask Casey A3, 10-20).** `assistant_answer` may
-also return one `event.create.v1`, `event.update.v1`, `event.complete.v1`, or
-`event.cancel.v1`. `assistantService` rejects extra fields, resolves the Event
-type to a canonical label/key/kind, refuses meeting kinds, validates firm-local
-ISO date/time, resolves creation-time links/providers/reminder assignees, and
-requires 1–8 current evidence references. Existing-event actions additionally
-need a cited row containing the exact `event_id`; the service reloads the row
-and accepts only Scheduled, non-superseded targets.
-
-Create requires type/title/date/all-day and a time when timed. Optional duration
-is 1–1,440 minutes; null means the Event service's 60-minute Google default.
-All-day normalizes time/duration to null and scope to firm-wide. Link is one
-verified `case|contact|case_number` pair and is never updateable. Scope is null
-(all providers), `0` (none), or a verified `does_appts` user. Reminder is null
-or an assignable user plus a non-past firm-local date and uses the canonical
-linked-Task side effect. Update exposes only type/title/date/time/all-day/
-duration/location/URL/note/scope/reminder—not status, resolution, kind,
-`type_key`, calendar id, dedupe, `skip_gcal`, link identity, or actor.
-
-Complete and cancel use their dedicated `/api/events/:id/*` routes. Resolution
-is server-defaulted and displayed (`deadline` complete → `met`, other complete
-→ `held`, cancel → `cancelled`); only allowed staff-facing per-kind values
-survive (`missed` remains sweep-owned). Cancel
-also defaults and displays `delete_gcal:true`. The card/SweetAlert describes
-Google Calendar and reminder effects. The browser fixes the four route/method/
-body mappings and never sends `acting_user_id`; the authenticated Events route
-stamps the actor. Single-flight/retry/history-result behavior mirrors Tasks,
-and success opens `showEvent`.
-
-**Card freshness and applied markers (all families).** Validation runs when
-Casey answers; nothing re-reads the target at click time. A card therefore
-offers its write only while fresh: the browser stamps `received_at` when the
-answer arrives, and a card older than 15 minutes, or any unapplied card
-reopened from saved history (`restored`), shows **Ask Casey again** instead
-(checked at render, on click, and again after the review dialog). Canonical
-routes keep their own guards (appointment status, contact row versions). The
-applied-result message is saved with `required:true` (one retry); the button
-stays disabled until it settles, and a failure is shown loudly on the card and
-in a warning dialog — the write is never repeated. P4's six canonical create
-routes also accept the draft UUID as their user-scoped Idempotency-Key.
-
-**Durable action receipts (P5).** `assistantActionLedger` registers only the
-server-normalized UUID/kind/actor before returning a proposal to a browser
-that opts in with `action_ledger_version:1`. Older browser builds receive no
-ledger row and retain legacy chat markers during backend-first rollout. The browser
-claims through `/api/assistant/actions/:draftId/claim` before calling its
-canonical route, then records only the canonical task/event/appointment/contact
-ID through `:draftId/result`. These routes perform no business writes. Claims
-are autocommitted on the pool, outside the canonical transaction; neither a
-business rollback nor an uncertain response frees them. A claim without a
-receipt is always `unknown` and never offers another write, even when fresh.
-`/api/assistant/actions/reconcile` scopes reads to the signed-in user; ledger
-rows override chat markers and inline applied flags. Missing rows retain legacy
-marker restoration, but cannot be claimed. Old kind versions remain readable
-receipts and unsupported cards stay inert. Receipts contain no action values,
-auth/session credentials or raw evidence; the claim's receipt capability lives
-only in browser memory, excluded from chat serialization. Receipt persistence
-retries once and offers **Retry saving result** without replaying the write.
-All ledger rows are retained until user deletion, independently of chat pruning
-or deletion; there is no time-based sweep. Rollback reverts frontend, then
-backend, and keeps the table and receipts. Migration: `scripts/caseyP5Ledger.js` (CHECK
-by default; SQL must precede backend, then frontend).
-
-No bus change was needed. `public/js/yc-sync.js` already maps the canonical
-create/update/complete/cancel calls to `event:<id>` refetch markers, and the
-Calendar (the Events tab is retired, U9b-P4), case, and contact readers already subscribe. There is no
-Casey emit. Event batch, delete/reopen, and calendar selection are not part of
-A3; Appointments use the separate A4 contract below.
-
-**Reviewed Appointments lifecycle (Ask Casey A4/A4.1, 10-20).** Seven closed
-kinds are enabled: `appt.create.v1`, `appt.update.v1`, `appt.attended.v1`,
-`appt.no_show.v1`, `appt.cancel.v1`, `appt.reschedule.v1`, and
-`appt.reschedule_later.v1`. `assistantService` rejects extra fields, requires
-1–8 current evidence references, resolves contacts/cases/provider/type labels
-again, accepts only an active registry `meeting` type and an active `does_appts`
-provider (`user_auth LIKE 'authorized%' AND user_type <> 0`, the
-`taskService.findAssignableStaff` predicate — `user_auth` is a varchar), and validates future firm-local `YYYY-MM-DD HH:MM[:SS]` without a
-timezone suffix. Create additionally requires contact, 1–1,440 minute length,
-platform, and time; a case linked to that contact and a note are optional.
-**Client confirmations are off unless asked:** off, the normalizer returns
-`confirm_sms/confirm_email` (`sms/email` on cancel/reschedule) false and drops
-`confirm_message`, and the browser sends them false. On (create, cancel,
-reschedule-now), the normalizer resolves the message STRICT with the route's
-resolver and refs before the card is shown, the browser sends that resolved
-text, and the route's own non-strict resolve fills only the manage link
-`{{appts.appt_manage_token|default:}}` (shown as a labeled element); recipient,
-sender and subject are the route's, and an opted-out NUMBER refuses the SMS
-confirmation (an automation send; an email opt-out is marketing-only — D18 —
-so the email confirmation still goes). Contract: `ref/ASK_CASEY_ACTIONS_PLAN.md` A4.1 *Client
-confirmations*. The normalized type carries the server-owned `type_key` and
-singleton flag.
-
-Existing actions need evidence containing the exact `appt_id`; the service
-reloads joined current status/contact/case/provider/calendar state. Canceled
-and Rescheduled are terminal. Attended and No Show can correct one another;
-cancel and either reschedule form also accept those native correction states.
-The broad canonical PATCH does not update calendars or automation, so Casey's
-update body is intentionally limited to `appt_note` and `appt_case_id`; a new
-case link is verified against the Appointment contact.
-Date/time changes use the reschedule service; type, length, platform, provider,
-status, GCal/ref/view/hook fields, `source`, and actor are excluded.
-
-No-show defaults `enroll:false` and the review states possible no-show sequence
-and intake-pipeline effects. Cancel defaults `cancel_gcal:true` and
-`create_task:false`; it sends nothing to the client unless a confirmation was asked for. Reschedule-now retires the predecessor, removes
-old firm/provider calendar entries and automation, creates a lineage-linked
-successor with new calendar/automation, and opens the successor (a client
-confirmation only when asked). Reschedule-later creates no successor, removes calendar/
-automation, and optionally creates the reviewed follow-up Task. Create review
-also discloses firm/provider calendar attempts, no-show cancellation,
-pre-appointment enrollment, and registry singleton supersession.
-
-The browser owns seven fixed kind→route/method/body mappings through the
-ordinary `/api/appts*` routes. Routes stamp authenticated actor and
-`source:'staff'`; neither comes from the model. SweetAlert review, dialog/write
-single-flight, retryable errors, persisted results, and canonical open-record
-behavior mirror Tasks/Events. `apptService` refuses repeats for every caller:
-`cancelAppt` on a Canceled row and `rescheduleAppt`/`rescheduleLater` on a
-Rescheduled row throw 409 `appt_status_conflict`, and the status UPDATE is
-conditional so a racing duplicate changes nothing (no second successor or
-client notice). `yc-sync` already covers create, PATCH,
-attended/no-show, cancel, and both old/new reschedule IDs, so no bus code or
-Casey emit changed.
-
-**Reviewed contact subrecords (Ask Casey A5, 10-20).** Nine closed kinds cover
-create, narrow update, and history-preserving end for one phone, email, or address.
-Create evidence must contain exact `contact_id`; existing actions require one
-cited row containing that parent plus exact `phone_id`, `email_id`, or
-`address_id`. `assistantService` rejects extra fields, reloads the contact and
-active subrecord, normalizes through the native validators, and renders the
-complete value plus all primary/mirror, consent/delivery, and lifecycle effects.
-
-Phone/email create rejects active ownership collisions and never uses
-`?force=true`. Phone/email PATCH cannot change the value; narrow updates expose
-label, notes, primary promotion, and explicit SMS/email opt-out or MMS fields.
-Address update may also change address parts. Verified state, start-date edits,
-explicit primary demotion, reactivation, transfer, hard DELETE, scalar contact
-fields, and batch actions are excluded. An address created with no stated
-start keeps `start_date` NULL ("since forever"), as the native path does. End
-requires a non-future firm-local date and a reason of at most 40 characters
-(the `varchar(40)` width — relaxed sql_mode would truncate silently; browser
-and server both refuse longer), sets lifecycle fields through PATCH, and preserves history.
-
-Primary creation/promotion shows and demotes the current primary, then the
-native service recomputes the scalar contact mirror. Update/end proposals carry
-a server-owned `updated_at` version; primary-changing writes also carry the
-reviewed current-primary ID, including explicit none. The canonical routes
-strip those values from field validation and pass optional service
-preconditions; locked stale reviews fail before UPDATE/demotion while native
-callers that omit them remain compatible.
-
-The browser owns all nine fixed `/api/contact-phones`, `/api/contact-emails`,
-and `/api/contact-addresses` POST/PATCH mappings. SweetAlert review,
-single-flight, retry, persisted result restoration, and opening the parent
-contact match prior families. Canonical `yc-sync` now emits recipient-contact
-refetch markers for every create/PATCH response and retains donor emission for
-native forced phone/email transfers. This fixes every caller; there is no Casey
-emit or executor.
-
-**Question deep links.** `ask=<encoded question>` may accompany any canonical
-workspace `open=` target. It
-captures a maximum-2,000-character draft in the shell, synchronously removes
-`ask` from the address bar before auth/API fetches, and exposes it through the
-one-shot `ycTakeAssistantDraft()`. The assistant assigns it only to
-`textarea.value`; it never executes from a GET. Raw question URLs are an
-accepted product risk and the operator manual warns that the original URL may
-remain in browser/email/chat/proxy/server history. The canonical workspace URL
-continues to contain IDs only.
-
-**Pointers.** `services/assistantService.js`,
-`services/assistantKnowledgeService.js`, `services/assistantChatService.js`,
-`services/assistantAttachmentService.js`, `lib/assistantTicket.js`,
-`services/assistantWeatherService.js`,
-`lib/aiPrompts/assistantPlan.js`, `lib/aiPrompts/assistantInvestigate.js`,
-`lib/aiPrompts/assistantAnswer.js`,
-`routes/api.assistant.js`. Operator docs: manual 05/17. Tests:
-`assistantService`, `assistantAttachmentService`, `assistantTicket`, plus
-`assistantSidebar`, `featureRegistry` and manual coverage.
-
-## ═══════════════════════════════════════════════════════════════
 ## 34. COMMS ARCHIVE — RECORDINGS, TRANSCRIPTS, SUMMARIES (comms archive arc, Oct 2026)
 ## ═══════════════════════════════════════════════════════════════
 

@@ -500,8 +500,8 @@ async function wouldFire(db, ch, rule, actions, output, { isTest }) {
 }
 
 /**
- * The read kind. `step` is the validated shape from assistantService
- * validateStep: { channel, rule_id, execution_id? | sample? | window? }.
+ * The read kind (Casey v1's typed read; v1 retired at Casey v2 S6, 2026-11-24 —
+ * kept for the next caller). `step`: { channel, rule_id, execution_id? | sample? | window? }.
  * Returns evidence rows; writes nothing.
  */
 async function previewRows(db, { channel, rule_id, execution_id, sample, window } = {}) {

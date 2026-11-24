@@ -1,8 +1,6 @@
 'use strict';
 
-// one test requires services/assistantService (its normalizeWorkspaceContext, pure): no read-only pool,
-// as in tests/assistantService.test.js — on a dev machine 127.0.0.1:3306 is production
-jest.mock('../startup/dbReadonly', () => ({}));
+// Casey v1's pane and service went at S6 (2026-11-24): the shell hosts /casey.html alone; the page's own tests are tests/caseyPage.test.js.
 
 const fs = require('fs');
 const path = require('path');
@@ -10,7 +8,6 @@ const { JSDOM } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..');
 const SHELL = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
-const ASSISTANT = fs.readFileSync(path.join(ROOT, 'public/assistant.html'), 'utf8');
 const MANAGER = fs.readFileSync(path.join(ROOT, 'public/automationManager.html'), 'utf8');
 const SUBTAB = fs.readFileSync(path.join(ROOT, 'public/js/ycSubTab.js'), 'utf8');
 const NAVIGATION = SHELL.slice(
@@ -44,33 +41,34 @@ function assignedFnSrc(src, name) {
 describe('Ask Casey sidebar host', () => {
   test('there is exactly one stable assistant iframe and no workspace panel twin', () => {
     const doc = new JSDOM(SHELL).window.document;
-    expect(doc.querySelectorAll('iframe[src="/assistant.html"], iframe[data-src="/assistant.html"]')).toHaveLength(1);
+    expect(doc.querySelectorAll('iframe[src="/casey.html"], iframe[data-src="/casey.html"]')).toHaveLength(1);
+    expect(SHELL).not.toMatch(/assistant\.html/);   // S6: no v1 pane, no fallback
     expect(doc.getElementById('caseyFrame')).not.toBeNull();
     expect(doc.getElementById('assistantDiv')).toBeNull();
     expect(doc.getElementById('askCaseyOpen').textContent).toMatch(/Ask Casey/);
   });
 
-  test('the frame loads the v2 pane when the server says v2 is on, the v1 pane otherwise or on any failure', async () => {
-    for (const [apiSend, expected] of [[async () => ({ status: 'success', enabled: true }), '/casey.html'], [async () => ({ status: 'success', enabled: false }), '/assistant.html'], [async () => { throw new Error('offline'); }, '/assistant.html']]) {
-      const dom = new JSDOM('<!doctype html><body><iframe id="caseyFrame" data-src="/assistant.html"></iframe></body>', { url: 'https://app.test/', runScripts: 'outside-only' });
-      const w = dom.window;
-      w.E = (id) => w.document.getElementById(id);
-      w.matchMedia = () => ({ matches: false });
-      w.caseySidebarPrior = null;
-      w.apiSend = apiSend;
-      w.eval(`${fnSrc(SHELL, 'openCasey')}`);
-      expect(w.openCasey()).toBe(true);
-      await new Promise((r) => setTimeout(r, 0));
-      expect(w.E('caseyFrame').getAttribute('src')).toBe(expected);
-      expect(w.E('caseyFrame').hasAttribute('data-src')).toBe(false);
-      expect(w.openCasey()).toBe(true);                               // a second open never reloads the frame
-      await new Promise((r) => setTimeout(r, 0));
-      expect(w.E('caseyFrame').getAttribute('src')).toBe(expected);
-    }
+  test('the frame loads /casey.html once, with no boot call and no fallback (S6: the only Casey); a second open never reloads it', async () => {
+    const dom = new JSDOM('<!doctype html><body><iframe id="caseyFrame" data-src="/casey.html"></iframe></body>', { url: 'https://app.test/', runScripts: 'outside-only' });
+    const w = dom.window;
+    w.E = (id) => w.document.getElementById(id);
+    w.matchMedia = () => ({ matches: false });
+    w.caseySidebarPrior = null;
+    const calls = [];
+    w.apiSend = async (p) => { calls.push(p); return { status: 'success' }; };
+    w.eval(`${fnSrc(SHELL, 'openCasey')}`);
+    expect(w.openCasey()).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(w.E('caseyFrame').getAttribute('src')).toBe('/casey.html');
+    expect(w.E('caseyFrame').hasAttribute('data-src')).toBe(false);
+    expect(calls).toEqual([]);                                        // nothing asked: there is no choice to make
+    expect(w.openCasey()).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(w.E('caseyFrame').getAttribute('src')).toBe('/casey.html');
   });
 
   test('collapse and expand reuse the iframe and never mutate the workspace URL', async () => {
-    const dom = new JSDOM('<!doctype html><body><iframe id="caseyFrame" data-src="/assistant.html"></iframe></body>', {
+    const dom = new JSDOM('<!doctype html><body><iframe id="caseyFrame" data-src="/casey.html"></iframe></body>', {
       url: 'https://app.test/?files=cCASE1234&open=file%3A0', runScripts: 'outside-only',
     });
     const w = dom.window;
@@ -81,12 +79,9 @@ describe('Ask Casey sidebar host', () => {
     w.eval(`${fnSrc(SHELL, 'openCasey')}\n${fnSrc(SHELL, 'closeCasey')}\n${fnSrc(SHELL, 'toggleCaseyExpanded')}`);
     const frame = w.E('caseyFrame');
     const before = w.location.href;
-    // Casey v2 S3a: the frame's src is decided by GET /api/casey/boot (v2 on → /casey.html);
-    // with no apiSend at all (this bare window) the choice falls back to the v1 pane.
+    // S6: the pane loads at once — no boot call, no choice, no apiSend needed (this bare window has none).
     expect(w.openCasey()).toBe(true);
-    expect(frame.getAttribute('src')).toBe('about:blank');
-    await new Promise((r) => setTimeout(r, 0));
-    expect(frame.getAttribute('src')).toBe('/assistant.html');
+    expect(frame.getAttribute('src')).toBe('/casey.html');
     expect(w.closeCasey()).toBe(true);
     expect(w.document.body.classList.contains('sidebar-skinny')).toBe(true);
     expect(w.openCasey({ expanded: true })).toBe(true);
@@ -130,7 +125,6 @@ describe('Ask Casey sidebar host', () => {
     expect(JSON.parse(JSON.stringify(ctx.snapshot.active))).toEqual({ kind: 'workspace', tab: 'firm:ops', rest: 'moreAutomations~workflows' });
     expect(ctx.display_label).toBe('Operations');
     const snap = JSON.parse(JSON.stringify(ctx.snapshot));
-    expect(require('../services/assistantService').normalizeWorkspaceContext(snap)).toEqual(snap);
     w.ycLauncher = { effectiveRegistry: () => [] };          // a page the launcher no longer lists: the generic label
     expect(w.ycAssistantContext().display_label).toBe('Current workspace');
   });
@@ -154,36 +148,6 @@ describe('Ask Casey sidebar host', () => {
     expect(sync.indexOf('history.replaceState')).toBeLessThan(sync.indexOf('ycAssistantRefreshContext'));
   });
 
-  test('send replaces a stale captured tab with the live contact unless the chip was removed', () => {
-    const dom = new JSDOM('<!doctype html><body></body>', { runScripts: 'outside-only' });
-    const w = dom.window;
-    const live = {
-      snapshot: {
-        v: 1,
-        canonical_url: '/?files=p1309&open=file%3A0',
-        files: [{ kind: 'contact', id: '1309', rest: '' }],
-        active: { kind: 'file', index: 0, entity: { kind: 'contact', id: '1309', rest: '' } },
-      },
-      display_label: 'Chardonnay',
-    };
-    w.workspaceContextAttached = true;
-    w.workspaceContext = { snapshot: { canonical_url: '/?open=tabCases' }, display_label: 'Cases' };
-    w.captureWorkspaceContext = jest.fn(() => live);
-    w.renderWorkspaceContext = jest.fn();
-    w.eval(`${fnSrc(ASSISTANT, 'refreshWorkspaceContext')}\n${fnSrc(ASSISTANT, 'freezeWorkspaceContextForTurn')}`);
-
-    const frozen = w.freezeWorkspaceContextForTurn();
-    expect(frozen).toEqual(live);
-    expect(w.workspaceContext).toEqual(live);
-    live.snapshot.files[0].id = 'changed-after-freeze';
-    expect(frozen.snapshot.files[0].id).toBe('1309');
-
-    w.workspaceContextAttached = false;
-    const calls = w.captureWorkspaceContext.mock.calls.length;
-    expect(w.freezeWorkspaceContextForTurn()).toBeNull();
-    expect(w.captureWorkspaceContext).toHaveBeenCalledTimes(calls);
-    dom.window.close();
-  });
 
   test('mobile uses the same host as a full-width sheet', () => {
     expect(SHELL).toMatch(/body\.casey-sidebar-open #appSidebar \{ transform: translateX\(0\); width: 100vw !important; \}/);

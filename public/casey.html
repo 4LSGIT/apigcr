@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Casey</title>
 <!-- public/casey.html — Casey v2's pane (ref/CASEY_V2_DESIGN.md §4.6, as built §9 S3a).
-     Loaded by the shell into #caseyFrame when GET /api/casey/boot says v2 is on
-     (otherwise the shell loads the v1 pane, /assistant.html). Everything goes
+     Loaded by the shell into #caseyFrame (the only Casey since S6 retired the
+     previous pane, 2026-11-24). Everything goes
      through the parent's apiSend (waitForParent below; the page never reads the
      JWT, AI_CONTEXT §3): POST /api/casey/turn as an NDJSON stream rendered line
      by line into the trail, GET/DELETE /api/casey/chats, POST /api/casey/turn/stop.
@@ -737,13 +737,16 @@ async function startReview() {
 }
 async function start() {
   if (REVIEW) return startReview();
-  try { boot = await P.apiSend('/api/casey/boot'); } catch (_) { boot = null; }
-  if (!boot || !boot.enabled) { log.innerHTML = '<div id="empty">Casey v2 is off.<span class="yc-hint">The shell loads the previous Casey when it is.</span></div>'; sendBtn.disabled = true; return; }
+  let bootErr = null;
+  try { boot = await P.apiSend('/api/casey/boot'); } catch (e) { boot = null; bootErr = e && e.status && e.message ? String(e.message) : null; }   // apiSend's error carries the route's status + message; a network failure has no status
+  if (!boot || boot.status !== 'success') {   // the route's own words when it refused (a View-as session, say); the generic line when nothing answered
+    log.innerHTML = '<div id="empty">Casey could not start.<span class="yc-hint">' + esc(bootErr || (boot && boot.message) || 'The boot request failed — reload the page, or tell IT if it keeps happening.') + '</span></div>'; sendBtn.disabled = true; return;
+  }
   renderModelMenu(); setChip(boot.model); showModelControl();
   textEl.maxLength = boot.limits && boot.limits.text_max || 4000;
-  window.ycAssistantRefreshContext = renderContext;   // the shell calls this as files/tabs change (the same hook as v1's pane)
+  window.ycAssistantRefreshContext = renderContext;   // the shell calls this as files/tabs change
   renderContext();
-  // A `?ask=` link: the shell holds the question until a Casey pane takes it (v1 does the same).
+  // A `?ask=` link: the shell holds the question until the Casey pane takes it.
   try { const draft = typeof P.ycTakeAssistantDraft === 'function' ? P.ycTakeAssistantDraft() : null; if (draft) textEl.value = String(draft).slice(0, textEl.maxLength); } catch (_) {}
   await loadChats().catch(() => {});
   sendBtn.addEventListener('click', () => sendTurn(textEl.value));

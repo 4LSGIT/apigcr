@@ -2,8 +2,8 @@
 // as Ask Casey v1 (assistant_ai_monthly_cap_cents, lib/settingsRegistry.js),
 // over the same rows. v2 logs its ai_calls rows as consumer_ref
 // 'assistant_v2:u<user>:c<chat>' — inside the 'assistant_%' family v1 already
-// sums (services/assistantService.js assistantMonthToDateCents) — so one cap
-// bounds both surfaces without touching the frozen v1 code: either side's
+// sums (v1's assistantMonthToDateCents, retired at S6; its ai_calls rows still count) — so one cap
+// bounds every surface (v1's code is gone; the family name stays): either side's
 // spend counts against the other's check. Checked before EVERY model call of
 // a turn, so a turn in flight may overshoot by one request's cost. Missing /
 // blank → the code default; present but not a whole number → 0 (fail closed,

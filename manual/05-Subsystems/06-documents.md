@@ -72,12 +72,9 @@ created" note and the root is added anyway.
 You cannot add a folder that sits inside a folder we already watch (or that
 contains one). Everything underneath would be read twice for no benefit.
 
-**From Ask Casey.** Casey can add a root, or switch one on or off, as a card
-you review (see [Ask Casey → Document sync roots](17-ask-yisracase.md)). It
-first reads the folder in Dropbox and the card tells you what the first walk
-will register — every file beneath the folder, in backfill mode — before you
-confirm; the same duplicate, nesting and file rules apply, in the same words.
-Casey never deletes a root (there is no delete) and never changes a path.
+**From Ask Casey.** Casey can propose the same add, or an on / off switch,
+as a card you review (the routes above; the same duplicate, nesting and file
+rules apply). There is no delete route, so no card deletes a root.
 
 ### Why there is no Delete button
 
@@ -228,18 +225,10 @@ Only documents the system attached by itself are detached this way. Anything a
 person attached to the case by hand stays put — correcting a folder never
 silently undoes somebody's filing decision.
 
-**From Ask Casey.** Casey can prepare the same re-link for one case as a card
-you confirm (see [Ask Casey → A case's Dropbox folder](17-ask-yisracase.md)).
-It offers the strict suggestions above — never a surname-only match — also for
-cases this queue does not list (a case with no folder at all), and its card
-counts the documents that attach and the ones that are detached before you
-confirm. Casey can also take a folder path you **type**: it first reads the
-folder in Dropbox (does it exist, is it a folder, is it under a sync root, what
-is in it) and the card then carries a warning that the folder is **not one of
-the suggestions** — neither the case number nor the client's name is in its
-name — so you know only your word ties it to the case. And Casey can **undo
-the latest re-link** of a case (from the activity-log entry it wrote), which
-is itself a re-link back to the old folder.
+**From Ask Casey.** Casey can propose the same re-link for one case — or the
+undo of one, which is itself a re-link back to the old folder — as a card you
+confirm (the panel's routes, one case per card; it can read the Dropbox folder
+first and tell you whether it is one of the suggestions).
 
 ### Dismissing
 
@@ -249,10 +238,8 @@ do here." It can be undone with the checkbox at the bottom of the block.
 
 **Dismiss all** does the same for every case in the "no matching folder" strip at
 once. Safe for exactly the same reason, and the only realistic way to clear a few
-hundred dead leads. Casey can dismiss or un-dismiss too, **one case per card**
-(it will tell you to use this panel's Dismiss all for many), also for a case
-this queue does not list — the stamp is then only a note on the case's folder
-cache.
+hundred dead leads. Casey can propose a dismiss or an un-dismiss too, **one
+case per card** (use this panel's Dismiss all for many).
 
 ### Checking your work
 
@@ -271,8 +258,7 @@ that clears those, and dismissing is the right answer for them.
 Find the case in the re-link queue and look at its suggestions. If nothing is
 suggested, search Dropbox by hand — the folder may be named in a way nothing can
 match. This panel has no field for a typed path; ask Casey to link the folder
-you found (it reads the folder first and warns that it is not a suggestion), or
-ask IT.
+you found (it can read the folder first), or ask IT.
 
 **"Documents from the wrong client are on a case."**
 Tell IT immediately, with both case numbers. Do not try to fix it by re-linking.

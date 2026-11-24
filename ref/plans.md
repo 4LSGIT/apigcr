@@ -699,7 +699,7 @@ it:
   picker, new steps defaulting to safe. S3 (same day): the first Casey
   authoring kind shipped — `job.code_safe.create.v1`, a one-time safe-mode
   scheduled job on the P1 card engine (ruling 13 in
-  `ref/ASK_CASEY_ACTIONS_PLAN.md` has the scope; workflow-STEP code authoring
+  `ref/archive/ASK_CASEY_ACTIONS_PLAN.md` has the scope; workflow-STEP code authoring
   stays with A17.4c behind the A17 ladder). Remaining:
   migrating the 41 published standard steps, still blocked on **no `Intl`** in
   the QuickJS build (published wf27/33/49/50 use `Intl.DateTimeFormat`,
@@ -739,10 +739,6 @@ it:
   staff. But a hook transform can still read inbound headers and an `http`
   target can still send data out — opening hooks is a data-flow decision,
   not only a sandbox one.
-- **Casey's ingest preview could take unsaved bodies.** It refuses them
-  because a model-composed body would have run in-process; that reason is
-  gone, and the ingest code gate no longer refuses staff. A separate
-  decision.
 - **test-match's syntax pre-check still uses V8's parser** (compile-only
   `new Function`, never called) because its error text is pinned by
   `tests/fixtures/ingestRuleTestRoutes.golden.json`. Switching it to the guest
@@ -755,22 +751,12 @@ it:
 
 ## From the Ask Casey arc — P5 ledger follow-ups (2026-10-22)
 
-- **A refused claim reads as `unknown` when the chat is reopened.**
-  `assistant_action_ledger.status` is `enum('in_flight','applied')` with NULL
-  meaning not-applied, so a row cannot express "claimed, then refused". The
-  card gets this right in the session it happened in (a 4xx other than 409 is
-  reported as a refusal that wrote nothing), but the row stays `in_flight`, so
-  a reopen falls back to the conservative "this may already have been applied"
-  wording. Costs a misleading message, never a write — the claim is spent
-  either way and no state offers the write again. A third status would fix it
-  and needs a migration; not worth one on its own, so fold it into the next
-  ledger migration if there is one.
-- **Nothing prunes `assistant_action_ledger`** either: rows are kept until the
-  user is deleted (FK cascade), by design. Same shape as the
-  `request_idempotency` note below, and a single age sweep could serve both.
+- **`assistant_action_ledger` is unused since S6** (v1 retired 2026-11-24): it
+  is dropped with the other two `assistant_*` tables at S6c. The
+  `request_idempotency` age sweep below stays open on its own.
 ## From the Casey automation-authoring planning session (2026-10-22) — native-side
 
-(The slice plan is A17/A18 + P11-P13 in `ref/ASK_CASEY_ACTIONS_PLAN.md`. These
+(The slice plan is A17/A18 + P11-P13 in `ref/archive/ASK_CASEY_ACTIONS_PLAN.md`. These
 are canonical defects and gaps that session measured; none is a Casey slice,
 and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
 
@@ -906,16 +892,6 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   saved publishes clean; and sequence `error_policy` is unvalidated at save
   (the engine treats any strategy other than `abort` / `retry_then_abort` as
   ignore — live rows hold `ignore`, `retry_then_ignore` or NULL).
-- **Casey sequence authoring (A18.2) — what it leaves open.** (1)
-  `automation.definition` for a
-  sequence reads `current_version` by default even when a draft exists, so the
-  evidence Casey cites can show the published steps while the card inserts
-  into the draft (the card names the displaced DRAFT step and the base check
-  holds, so nothing lands wrong — but the model plans against the wrong list);
-  make the sequence read draft-aware (today both definition reads fall back to
-  the draft only for a never-published, v0 record). (2) Not authorable yet: editing or deleting a sequence step,
-  conditions, fire guards, error policies, internal_function / webhook /
-  start_workflow steps, and publish (A18.3).
 - **`POST /executions/:id/resume` is neither state-guarded nor atomic.** It
   refuses only `active|processing|delayed`, so `completed` and `held`
   executions are resumable; it never checks `workflows.active`; and a plain
@@ -932,7 +908,7 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   `seq-<enrollment>-step-<n>` key can both insert. (The enrollment-level
   gaps — idempotency, the duplicate-guard race, the first-step scheduling
   wedge, bare-500 errors — were fixed natively in A18.4a; see
-  `ref/ASK_CASEY_ACTIONS_PLAN.md` A18.4.)
+  `ref/archive/ASK_CASEY_ACTIONS_PLAN.md` A18.4.)
 - **The enroll fence assumes the pool.** `_enrollWithTemplate`'s GET_LOCK is
   released before a caller-owned transaction would commit, so a caller that
   passed a transaction connection would get a narrowed race, not a closed one.
@@ -1015,24 +991,6 @@ COMMENTs.)
   `regex:` descriptors all compile under `l`; hook / trigger / suppression
   patterns not yet measured. Until then Casey writes no new pattern
   (preserve-only).
-- **Casey ingest `http` actions** (A20.2). A17.4b's literal-URL /
-  named-credential contract is built for workflow webhook steps (2026-11-15,
-  `services/assistantService.js` `normalizeWebhookConfig` /
-  `resolveWebhookStep`); wiring it to ingest http actions is what remains (an
-  ingest action has no "same workflow", so its evidence is the user's words or
-  a credential's host). (Forwards shipped as ingest actions 2026-10-27, Fred's
-  yes; `court_extract` stays off the allowlist.)
-- **Forwards in Casey WORKFLOW drafts** (A20.2 follow-up). `forward_as_email` /
-  `forward_as_sms` are ingest-action authorable only. To make them
-  workflow-draft authorable, `workflowSendAnnotation` must hold a forward's
-  `to` to a literal (or a closed placeholder set) the way it holds the sender,
-  and the `event` param needs an envelope variable the workflow actually has
-  (an ingest- or hook-started run's init data); the native workflow picker
-  hides them today (`__meta.uiHidden`).
-- **Applied ingest card deep link** (A20.2). The automations manager has no
-  ingest-rule record opener (`ASSISTANT_RECORD_BY_SUB` covers workflows,
-  sequences, jobs, hooks), so an applied card shows "find it under More →
-  Automations → Email / Phone" instead of opening the rule.
 
 ## From the Ask Casey arc — A14 direct sends (2026-10-27) — deferred
 
@@ -1041,35 +999,12 @@ COMMENTs.)
   `ref/MAILBOX_SYSTEM_DESIGN.md` §4.2), the Casey shape the same day (A14Y:
   `email.send.v1` `attachments` from cited `documents` rows, `send_at` →
   `POST /api/mail/send/schedule`; plan doc A14 "Released 2026-11-16"). What
-  stays refused BY NAME, on both the SMS card and the phone hub: MMS media
+  the phone hub still lacks (and so no Casey card can propose): MMS media
   (no native MMS send) and scheduling a text (nothing schedules an SMS). A
-  native phone-hub feature comes first; the Casey shape follows it.
-- **A14Y schedule card: receipt and cancel.** The ledger receipt of a
-  scheduled send is the contact (the receipt field is keyed by KIND and the
-  card kept `email.send.v1`); the job id rides only in the result payload and
-  the chat line. Casey offers no cancel of a scheduled send (the hub's
-  `DELETE /api/mail/send/scheduled/:id` exists; a `mail.schedule.cancel`
-  card would need a typed read of the caller's own scheduled list first).
-  Also unbuilt: a card can attach at most 7 files (8 evidence refs, one the
-  To) — the hub takes 10.
-- **Casey replies narrowed to ONE cited contact recipient** (A14X): a reply to
-  a sender with no active contact row, or to own mail whose hub To is several
-  addresses, is refused and answered from Comms. Widening it means a recipient
-  shape with no contact row behind it (no click-time contact re-read, no
-  Communications-tab receipt).
-- **Appointment-card confirmations: two unchecked edges.** The click-time
-  re-read checks the client's own phone/email rows for an opt-out; an active
-  row for that number/address on ANOTHER contact (the route's opt-out reader
-  counts it) is caught at proposal only. And the sender (`sms_default_from` /
-  `email_default_from`) is checked as set, not as a live, sendable line or
-  credential — a dead sender fails silently after the click, exactly as the
-  native form's confirmation does.
+  native phone-hub feature comes first. (The v1 send cards went at S6.)
 - **No `yc-sync` matcher for either send route** — an open Comms /
   Communications view does not hear a send from another frame (human or
   Casey); the record arrives later via the provider echo / mail ingest.
-- **A claimed-then-refused send reopens as "outcome unknown"** (the P5 ledger
-  limit below): the route's refusal is shown live, but reopening the chat
-  shows the conservative wording.
 
 ## From the Ask Casey arc — A17.7 workflow start (2026-10-28) — deferred
 
@@ -1079,35 +1014,15 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A17.4a/b query_db and webhook steps (2026-11-15) — deferred
 
-- **query_db html_rows output is not Casey-authorable** (`format: 'html_rows'`,
-  `base_url`, `html_columns` refused by name): its link base is a URL Casey
-  would compose. A reviewed shape — `html_columns` checked like select columns,
-  `base_url` held to the app's own origin — is a later revision.
 - **The native editor still saves any query_db structure.** Casey's
   normalizer builds and checks `select` / `where` / `join` field by field, but
   `__meta` still declares them as untyped arrays, so a human-saved step is
   validated only when it runs (a misspelled column fails the run). The P11
   alternative the plan named — an element schema in `__meta` — would close the
   human path too.
-- **A credential pair from ANOTHER workflow is not evidence.** Casey reuses a
-  (host, credential) pair only when a step of the same workflow already holds
-  it, or the credential's `allowed_urls` cover the URL. A permissive credential
-  (`allowed_urls` empty) used by another workflow on that host still needs the
-  human editor. Widening the evidence to every stored step is a deliberate
-  review.
-- **Sequence webhook steps** stay human-only (A18.2's sequence allowlist is
-  sms / email / task); the A17.4b contract could serve them once a sequence
-  step has a "same template" evidence read.
 
 ## From the Ask Casey arc — A18.4b sequence enroll (2026-10-28) — deferred
 
-- **User-bound Casey enrollments (the ids with no evidence shape).** A18.4c
-  takes a reviewed `trigger_data` with evidence-bound `appt_id` / `case_id`
-  (and A18.4d an evidence-bound `signing_request_id`), but refuses by name
-  `user` / `user_id` (bind `{{users.*}}`; no evidence row shape cites a user by
-  id — an appointment's provider binds through `appt_id` + `appt_with`
-  instead); a user slice needs a cited staff-row shape. `task_id` (binds
-  `{{tasks.*}}`) is refused for the same reason as a binding not yet reviewed.
 - **E-sign pointer for the other direct enroll callers.** A18.4d makes `POST
   /sequences/enroll` write `signing_requests.seq_instance_id` for an
   e-sign-scoped enroll (or cancel it), but the `enroll_sequence` internal
@@ -1118,12 +1033,6 @@ COMMENTs.)
   Moving the write-back into a shared helper they all call is the fix; whether
   any live workflow / hook passes one was not measured (A18.4d had no read-only
   key).
-- **Consent re-check at click covers the contact's own rows only.** A18.4e
-  discloses every send step's recipient consent on the enroll card and re-reads
-  it at click through the contact's phone / email list routes; a destination
-  that is not one of this contact's active rows (a fixed office number, a
-  related contact's address) is checked at proposal only — the send itself
-  re-checks at fire time either way (the engine skips the step).
 
 ## From the Ask Casey arc — A11.1 case folder relink (2026-11-03) — deferred
 
@@ -1131,26 +1040,14 @@ Released 2026-11-15 (A11.1X, Fred: "release means allow"; plan doc A11.1
 "Released"): free-typed folder paths (proved by the typed `document.folder`
 read, with a NOT A CANDIDATE danger line), dismiss / undo-dismiss
 (`case.folder.dismiss.v1`, one case per card) and a single-case undo of the
-LATEST re-link (`case.folder.relink.undo.v1`, through the same route). Still
-deferred:
+LATEST re-link (`case.folder.relink.undo.v1`, through the same route) — the
+v1 cards went at S6, the routes stay. Still deferred:
 
-- **Unlinking on the folder card** — a re-link detaches only the sync's own
-  links outside the new folder; one document's link is A11.2's unlink card
-  (`document.unlink.v1`).
-- **An undo of an OLDER re-link** (not the latest entry) — the undo card
-  refuses it: undo the latest first, one step at a time; each undo is itself a
-  re-link with its own entry.
 - **Bulk anything — NEVER.** The route header: "a bulk verb would exist to save
   eight clicks and would be the single most dangerous button in the app." That
-  covers a bulk undo and a bulk Casey dismiss too: the dismiss route's array
-  form stays the PANEL's ("Dismiss all" over its own queue); Casey's card
-  reaches cases the queue never lists, where a bulk dismiss is a bulk re-link's
-  ask in disguise.
-- **A typed path's click precheck cannot compare the registered file count**
-  (no browser-reachable read gives one; the candidates GET lists candidates
-  only) — it proves the case (link, cached path) and the folder (POST
-  `/api/dropbox/list`). A `GET /api/documents/relink/folder?path=` read route
-  would close that; not needed yet.
+  covers a bulk undo too, and the dismiss route's array form stays the
+  PANEL's ("Dismiss all" over its own queue) — a bulk dismiss from a Casey
+  card would be a bulk re-link's ask in disguise.
 - **Native gaps found while tracing (not Casey's):**
   - The panel lists only its QUEUE (a cached folder resolving cleanly and no
     attributed document): a case with no `case_dropbox` at all (the 15 cases
@@ -1173,7 +1070,7 @@ Released 2026-11-16 (A13X, Fred: "release means allow"; plan doc A13
 messages with their copies, or a whole mailbox / view with the count predicted
 by `countMarkRead`, markRead's read-only twin) and **unlinking** (the native
 `DELETE /api/mail/messages/:id/case-link` + `mail.case_unlink.v1`; the hub's
-log line gained Unlink). Moving a message to another case was a disclosed move
+log line gained Unlink) — the v1 cards went at S6, the routes stay. Moving a message to another case was a disclosed move
 since 2026-11-11. What is left, and why:
 
 - **SMS / call triage.** The phone hub has no read-marking and no case-link
@@ -1214,11 +1111,11 @@ since 2026-11-11. What is left, and why:
 
 Draft discard, PDF filing and appointment-linked forms shipped in A12.2,
 submitting a stored draft in A12.3, and a template's publish, visibility,
-version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
+version restore and delete in A12.4 (ref/archive/ASK_CASEY_ACTIONS_PLAN.md A12.2–A12.4).
 
 - **Template editing and creation** — released 2026-11-16 (A12X) as
   FIELD-LEVEL cards (one field added / changed / removed per card, the title,
-  a create from a reviewed field list — ASK_CASEY_ACTIONS_PLAN A12.4
+  a create from a reviewed field list — ref/archive/ASK_CASEY_ACTIONS_PLAN.md A12.4
   "Released 2026-11-16"). Still the form builder's, each with its reason:
   - **a form_key rename** — the key is the name every stored reader carries
     (`/f/<key>`, workflow / pipeline / portal definitions,
@@ -1241,18 +1138,6 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
   the builder's own before it re-applies the operation) are its only freshness
   checks (a save between the builder's read and the PUT is not caught; the
   form builder has the same gap).
-- **Cards still carrying a large object** (ASK_CASEY_ACTIONS_PLAN "Cards carry
-  the change, not the result", A12Y 2026-11-16 — the template field cards
-  moved to operation + hashes, re-derived at the click through the shared
-  `public/js/formTemplateOps.js`). Four 60,000-character gates remain, all
-  under the chat's 100,000-character `assistantChatService.MAX_PAYLOAD`: the
-  form draft card (`FORM_CARD_MAX_CHARS` — the draft's answers ride on it), the
-  form submit card (the same constant), the case-fields card
-  (`CASE_FIELDS_CARD_MAX_CHARS`) and workflow drafts (`WORKFLOW_DRAFT_MAX_JSON`).
-  Move each to the same shape — the operation plus `expected` / `next_hash`,
-  one shared pure apply module, re-derivation and the hash gate at the click —
-  when it next binds; none has yet (the dbkq questionnaire bound the template
-  cards first).
 - **A publish precondition** — `POST /api/form-templates/:id/publish` takes no
   expected-draft token (the workflow publish route's P11 `expected_base`), so
   a draft saved between the A12.4 card's click-time re-read and the POST
@@ -1278,22 +1163,6 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
 
 ## From the Ask Casey arc — A7 groups B/C case fields (2026-11-09) — deferred
 
-- **What the case fields card still refuses by name.** `case_341_current` /
-  `341_appt_id` (apptService's single-writer mirror of the live 341
-  appointment; no UI writes them either — the 341 is moved by rescheduling the
-  appointment, which Casey's appointment cards do; Fred's "ok" 2026-11-09).
-  `case_type` / `case_subtype` are editable since A7d (2026-11-09) — a raw
-  type/subtype edit re-resolves the pipeline WITHOUT a stage-log row or a
-  step check, exactly as the case page's own selects do; the card discloses
-  the before → after pipeline. The reviewed cross-pipeline MOVE onto a named
-  stage is the A9.3 transfer card (`case.pipeline.transfer.v1`, 2026-11-09).
-- **A7 ruling 2 — a conditional write on `PATCH /api/cases/:id`.** The card
-  now writes portal-visible columns (`case_chapter`, `case_341_link`,
-  `case_open_date`) with only the read-then-write freshness check (baked
-  `expected` + the click-time GET). A precondition in the route (expected
-  values compared in the UPDATE's own statement, 409 on a miss) closes the gap
-  between the re-read and the write — for a docket replace (A7e) also the gap
-  between the click-time collision search and the write.
 - **Native gaps found while tracing (not Casey's):**
   - `PATCH /api/cases/:id` checks no width (the two docket columns excepted
     since 2026-11-09): relaxed sql_mode stores any over-width varchar cut
@@ -1327,14 +1196,14 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
 
 ## From the Ask Casey arc — A11 / A11.2 documents (2026-11-02, 2026-11-11) — deferred
 
-Share and unlink shipped as A11.2 (ASK_CASEY_ACTIONS_PLAN). Register by
+Share and unlink shipped as A11.2 (ref/archive/ASK_CASEY_ACTIONS_PLAN.md). Register by
 external id, generate and the sync roots shipped as A11X (2026-11-17, Fred:
 "release means allow"; plan doc A11 "Released 2026-11-17"): the
 `document.folder` read lists a folder's entries with their Dropbox ids, so a
 register card cites the file's entry row; the generate card predicts the
 filing ladder read-only through `filePlacementService.describePlacement`; the
-sync-root cards sit behind their own switch `casey_document_sync_roots_enabled`.
-Still deferred:
+(Casey v1's sync-root cards and their switch went at S6, 2026-11-24; Casey v2
+proposes the routes as cards.) Still deferred:
 
 - **Status changes, replacement and deletion** (PATCH {status} — delete /
   restore / missing) — no screen offers them: the Documents page's edit dialog
@@ -1361,10 +1230,6 @@ Still deferred:
 
 ## From the Ask Casey arc — A10 checklists (2026-11-01) — deferred
 
-- **Lists on a bill.** A10X released colleague, appointment, event, task and
-  unlinked lists to Casey; a bill list stays refused because there is no bills
-  table or read route, so a card cannot name or freshness-check the bill (the
-  task drafts' rule). Needs a bills source first.
 - **Native: POST `/checklists/upsert-items` is not one transaction** (found
   building A10X's upsert card). It finds or creates the docs list, then deletes
   and inserts item by item on the pool, so a failure partway leaves some items
@@ -1377,11 +1242,12 @@ Still deferred:
   deterministic.
 - **A native reorder control.** The atomic route exists (A10X: PUT
   `/checklists/:id/items/order`, one transaction, 409 on a stale set) and Ask
-  Casey's reorder card is its only caller; checklistView.html still has no
-  drag handle or move buttons. A board control would call the same route.
+  The route has no UI caller since S6 (Casey v1's reorder card was it; a Casey
+  v2 card can propose it); checklistView.html still has no drag handle or move
+  buttons. A board control would call the same route.
 - **Sync gaps left on the native side.** Every list and item write a page
   makes is on the bus (`checklist:<link_type>:<link>`) — POST
-  `/checklists/upsert-items` since A10X (Casey's upsert card and the sending
+  `/checklists/upsert-items` since A10X (v1's upsert card, now gone, and the sending
   form's own browser call; server-side callers still announce nothing, as no
   server write does) — except a write to an UNLINKED list, which has no record
   address (checklistGetter fails closed). The global board's Mine and Unlinked views iframe `checklistView.html` and
@@ -1462,17 +1328,6 @@ Still deferred:
 
 ## From the Ask Casey arc — A16 report drafts (2026-10-27) — deferred
 
-- **The other report kinds.** Update (PUT, honouring the lock), run, lock /
-  unlock, delete and restore are separate reviewed kinds; only create ships.
-  Update needs a P3 precondition (`updated_at` or a version) — PUT today
-  overwrites whatever is there, after snapshotting it.
-- **Views.** Casey saves `kind:'report'` (Reports' run panel, where CSV
-  lives). A work list with clickable rows is a `kind:'view'` in
-  customView.html; offering it means teaching the views half of the
-  reportBuild prompt (actions, select params, the default/sentinel trap).
-- **A CSV control on the card itself.** Today the export is Reports' own CSV
-  button, one click after Open. A card control would call the canonical run
-  route and build the same CSV (through `public/js/csvSafe.js`).
 - **The Reports AI author's prompt still says SSN and DOB are "forbidden
   outright"** (`lib/aiPrompts/reportBuild.js` refusal list) — stale since the
   2026-09-24 ruling, and now contradicted by ruling 2 of 2026-10-27 (last-4 by
@@ -1575,10 +1430,6 @@ objects AND stored definitions). Readers and writers to move first:
 - **Reports**: `lib/reportSchema/manifest.js` exposes both columns; reports
   would read `comm_consent_state` (and the `yc_report` per-column grants on
   the two columns go orphan on the drop — revoke or re-provision).
-- **Casey's contact-subrecord kinds** diff and send the row flag
-  (`contactActionTarget`, `CONTACT_*_KEYS`, the card bodies in
-  `public/assistant.html`) — they become consent actions with the
-  `consent_version` stamp the send cards already use.
 - **Every writer's cache plumbing** goes with the column: `bornRow`'s row-flag
   write, `decideRowFlag`'s `*_optout_base` three-way compare (it then compares
   against the state the form loaded), `syncRowCaches` (update_db / insert_db's
@@ -1936,7 +1787,7 @@ The migration ran live on 2026-10-22 and `request_idempotency` is in
 
 ## From the Ask Casey arc (fix package 2026-10-21, P2 inventory 2026-10-22) — deferred
 
-(The actions arc's own roadmap is `ref/ASK_CASEY_ACTIONS_PLAN.md`; these are
+(The actions arc's own roadmap is `ref/archive/ASK_CASEY_ACTIONS_PLAN.md`; these are
 the native-side leftovers it surfaced.)
 
 - **The write route validates no assignee and no provider** (P2 inventory,
@@ -1950,10 +1801,6 @@ the native-side leftovers it surfaced.)
   services (reuse `taskService.findAssignableStaff`'s predicate — the same one
   the `user_auth = 1` bug taught us to share), which also closes it for native
   callers.
-- **`assistantService.eventDraftProvider` accepts a disabled provider.** It
-  filters on `does_appts = 1` only, with no `user_auth` / `user_type` test,
-  unlike `APPT_PROVIDER_SQL` next to it; `public/eventform.html` filters both,
-  so Casey can propose an availability scope staff cannot choose by hand.
 - **Event complete/cancel accept non-Scheduled and superseded rows.**
   `eventService.completeEvent` refuses only "already Completed" and
   `cancelEvent` only "already Canceled"; neither reads
@@ -2762,6 +2609,49 @@ edge; position-only loss, accepted.
   than substitute the literal. Under a `headers` map only credential-named
   entries are blanked; a header whose name merely contains "key" (an echoed
   `Idempotency-Key`) is blanked too — accepted.
+- **Casey v2 S6 follow-ups** (2026-11-24, v1 retired): (1) S6c — archive
+  (a dump to `ref/archive/` or a GCS object) and DROP `assistant_chats`,
+  `assistant_chat_messages`, `assistant_action_ledger` after a two-week soak,
+  with CLAUDE.md's column-drop gate (code sweep, schema objects, stored
+  definitions), as a node script CHECK / --apply; delete the 24 retired
+  `casey_*` rows from `app_settings` (the registry keeps them `retired`).
+  (2) The `yc_report` ACCOUNT boundary was proven by v1's
+  `assistantContinuation.mysql` twin — port that proof to a v2 twin beside
+  `tests/caseySqlRead.mysql.test.js`. (3) Coverage the deleted end-to-end v1
+  suites carried for NATIVE routes — ported in S6: the atomic reorder
+  (`tests/checklistsItemsOrder.mysql.test.js`), the Idempotency-Key handling
+  of `POST /api/phone-lines/:id/sms` and `POST /api/mail/send`
+  (`tests/sendRoutes.idempotency.test.js`) and of `POST /workflows/:id/start`
+  (`tests/workflowsStart.idempotency.test.js`); NOT yet ported, so these
+  routes' own key handling (claim, replay, refusal releases, lost ack keeps)
+  has no route-level test today — every v2 card step sends a key, so each is
+  a double-apply protection worth a suite: `scheduled_jobs.create`,
+  `hooks.create`, `reports.create`, `workflows.bulk_create`,
+  `sequences.step_insert`, `email_ingest` / `phone_ingest.rules_create`
+  (`tests/requestIdempotency.test.js` covers the library only); `GET
+  /api/cases/:id/pipeline?requirements=1` is pinned only by
+  `tests/caseUi.stepsPanel.test.js`. (4) The opt-out acknowledgement on a
+  Casey card's send (v1's `ycOptoutAck` flow) has no v2 equivalent: a v2 send
+  card runs the route as the user and takes the route's own 409 — decide
+  whether the card should offer the acknowledgement. (5) `aiService.call`'s
+  `cacheSystemPrefix` has no live caller (v2 caches through `converse`);
+  drop it or find it one. (6) Dead code v1 left behind, for a cleanup slice
+  (S6d) once measured: `services/automationReadService.js` (1,166 lines, "the
+  automation read surface for Ask Casey" — its only require is
+  `ingestRulePreviewService`'s `windowBound`; the two ingest executions
+  services name it in a comment only), `stepPreviewService.previewRows`
+  and `ingestRulePreviewService.previewRows` (no caller),
+  `lib/internal_functions/db.js` `__QUERY_DB_RULES` (no reader), the shell's
+  `YC_ASSISTANT_DESTINATIONS` / `ycAssistantNavigate` / `ycAssistantChildReady`
+  family in `public/index.html` (only v1's applied cards navigated through it;
+  `tests/assistantSidebar.test.js` still pins ten cases — check whether the
+  `workflows~<id>~execution` rest tokens serve URL deep links before deleting),
+  and exports whose only outside caller was v1 (`formSubmitService`
+  resolveBase / computeDiffAndPatch / wfListOf, `versionDiff.extractBranchTargets`,
+  `triggerService.listActiveRulesForEvent`, `caseService.judgeFillFromDocket`).
+  The phone / email services keep their `consentEvidence` option (the service
+  test pins it; a future caller may want it) and a stray `casey_draft_id` on a
+  contact write is now an unknown field (400), not a silently dropped marker.
 - **Casey v2 S5b — the MCP staff identity** (2026-11-23): S5a serves session
   keys only. The design's §4.9 server for STAFF (api_get / api_write with the
   client's approval, flag_for_review, sql_read on the report pool) waits for a
@@ -2795,8 +2685,8 @@ edge; position-only loss, accepted.
   (`POST /api/campaigns/test-send`, `POST /api/compose-docs-message`, the SU
   `POST /api/cta/:id/send` and `POST /api/phone-lines/admin/:id/test-sms`,
   design §8.6) — the ledger claim guards them meanwhile. v1's
-  `assistant_action_ledger` and the `/api/assistant/actions/*` routes stay
-  until S6 retires v1. A card's step `result` is stored as the browser
+  ledger and `/api/assistant/actions/*` routes went at S6 (2026-11-24); its
+  three tables wait for the S6c drop. A card's step `result` is stored as the browser
   reported it (cut to 16 KB); the model gets it in the outcome message — a
   route whose answer carries a secret would reach the chat that way, so
   SECRET_RETURNING routes are never proposable (unchanged); review the list

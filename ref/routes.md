@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-24T21:21:13.661Z_  
-_891 routes total — DELETE: 74, GET: 365, PATCH: 61, POST: 346, PUT: 42, _ALL: 3_
+_Generated 2026-11-24T22:51:00.287Z_  
+_880 routes total — DELETE: 73, GET: 363, PATCH: 60, POST: 339, PUT: 42, _ALL: 3_
 
 ## Global middleware chain
 
@@ -85,17 +85,6 @@ _891 routes total — DELETE: 74, GET: 365, PATCH: 61, POST: 346, PUT: 42, _ALL:
 | DELETE | `/api/assets/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/assets/:id` | `jwtOrApiKey` | — |
 | GET | `/api/assets/collections` | `jwtOrApiKey` | — |
-| POST | `/api/assistant/actions/:draftId/claim` | `jwtOrApiKey`, `staffOnly`, `chatRate` | — |
-| POST | `/api/assistant/actions/:draftId/result` | `jwtOrApiKey`, `staffOnly`, `chatRate` | — |
-| POST | `/api/assistant/actions/reconcile` | `jwtOrApiKey`, `staffOnly`, `chatRate` | — |
-| GET | `/api/assistant/chats` | `jwtOrApiKey`, `staffOnly`, `chatRate` | — |
-| POST | `/api/assistant/chats` | `jwtOrApiKey`, `staffOnly`, `chatRate` | — |
-| DELETE | `/api/assistant/chats/:id(\d+)` | `jwtOrApiKey`, `staffOnly`, `chatRate` | — |
-| GET | `/api/assistant/chats/:id(\d+)` | `jwtOrApiKey`, `staffOnly`, `chatRate` | — |
-| PATCH | `/api/assistant/chats/:id(\d+)` | `jwtOrApiKey`, `staffOnly`, `chatRate` | — |
-| POST | `/api/assistant/chats/:id(\d+)/messages` | `jwtOrApiKey`, `staffOnly`, `chatRate` | — |
-| POST | `/api/assistant/execute` | `jwtOrApiKey`, `staffOnly` | — |
-| POST | `/api/assistant/plan` | `jwtOrApiKey`, `staffOnly` | — |
 | POST | `/api/auth/change-password` | `jwtOrApiKey` | — |
 | POST | `/api/auth/update-profile` | `jwtOrApiKey` | — |
 | GET | `/api/availability` | `jwtOrApiKey` | — |
@@ -1171,4 +1160,4 @@ _891 routes total — DELETE: 74, GET: 365, PATCH: 61, POST: 346, PUT: 42, _ALL:
 
 ---
 
-_891 routes total — DELETE: 74, GET: 365, PATCH: 61, POST: 346, PUT: 42, _ALL: 3_
+_880 routes total — DELETE: 73, GET: 363, PATCH: 60, POST: 339, PUT: 42, _ALL: 3_

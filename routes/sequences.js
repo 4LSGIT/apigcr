@@ -3027,9 +3027,9 @@ router.get('/sequences/templates/:id/captured', jwtOrApiKey, async (req, res) =>
 
 module.exports = router;
 
-// Casey's sequence publish card (A18.3, services/assistantService.js) runs
-// the route's OWN publish validation at proposal time — reused, never copied,
-// so the card refuses exactly the drafts this route would.
+// The route's OWN publish validation, exported for callers that must refuse
+// exactly the drafts this route would (scripts/yisravidS1Data.js today; Casey
+// v1's publish card did, until v1 retired at S6).
 router.validateSequenceDraft = _validateSequenceDraft;
 
 // Test-only handle (tests/sequences.ensureDraft.test.js) — mirrors

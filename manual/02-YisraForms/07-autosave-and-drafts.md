@@ -58,8 +58,8 @@ If the draft's `schema_version` differs from the form's current `schemaVersion`,
 
 ## A Draft Saved Elsewhere
 
-A draft saved for the same record in another frame of the same browser — an
-Ask Casey draft card, or the same form open in another tab — is announced on the
+A draft saved for the same record in another frame of the same browser — a
+Casey card, or the same form open in another tab — is announced on the
 sync bus (`form:<link_type>:<link_id>`). Every form page in use loads the
 bus — the form renderer (`forms/render.html`) and the hand-built pages
 (`casedetails`, `casedetails-bk`, `issn`, `contact-form`) — and re-reads the
@@ -86,8 +86,8 @@ a newer draft at *time*: Restore or Discard it first". Restore loads the newer
 draft (and autosave resumes on top of it); Discard deletes it (and the next
 autosave saves the typing as a new draft). Nothing retries on its own.
 
-A draft **discarded** elsewhere (the banner's Discard, an Ask Casey discard
-card, or a submit's draft cleanup) is announced the same way when a draft was
+A draft **discarded** elsewhere (the banner's Discard, a Casey card's
+discard, or a submit's draft cleanup) is announced the same way when a draft was
 actually deleted: an open copy re-reads and its stale draft banner comes down.
 A copy with unsaved typing keeps that typing, and its next autosave saves a new
 draft. The form's own Discard is not re-read.

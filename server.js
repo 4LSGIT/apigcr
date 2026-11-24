@@ -47,7 +47,7 @@ app.set('trust proxy', 1);//google cloud run
 //     else identity, with Vary: Accept-Encoding set.
 // Streaming responses opt out with `Cache-Control: no-transform`, which this
 // middleware honors (never compresses, so never buffers): today that is Ask
-// Casey's streamed answer (routes/api.assistant.js, NDJSON). A new streaming
+// Casey's streamed turn (routes/api.casey.js, NDJSON). A new streaming
 // route that forgets the header is buffered until it ends.
 app.use(require("compression")());
 

@@ -146,7 +146,7 @@ The `changes` field contains only modified fields as `{ fieldName: [oldValue, ne
 ## Submitting a Stored Draft from the Server
 
 `POST /api/forms/submissions/submit-draft` runs this whole flow on the server for a
-draft that is already saved — for Ask Casey and any caller without the form open.
+draft that is already saved — for any caller without the form open (a Casey card, say).
 Body `{ submission_id, expected_updated_at? }` (the draft row's id; the optional
 `updated_at` refuses the submit with 409 when the draft was saved again since it
 was read). A signed-in user only — an API key gets 403.

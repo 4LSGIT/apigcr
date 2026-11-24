@@ -20,10 +20,10 @@ A **Casey report** in the Support Inbox (the flag under an answer, or Casey's ow
 
 ## What it does not do
 
-It does not resolve or reply (the Support Inbox does); it does not delete a chat (the owner does, from the pane); it does not show chats of the previous Casey (v1 keeps its own history until it is retired).
+It does not resolve or reply (the Support Inbox does); it does not delete a chat (the owner does, from the pane).
 
 ## Technical reference
 
-- Routes: `GET /api/casey/review` (the list: `user`, `q`, `flagged=1`, `before`, `limit` ≤ 200) and `GET /api/casey/review/:id` (the chat, its messages with every block, its cards, its reports) — `routes/api.casey.js`, the superuser casey guard (JWT + su + elevation); never a View-as session; not switched off by `casey_v2_enabled`.
+- Routes: `GET /api/casey/review` (the list: `user`, `q`, `flagged=1`, `before`, `limit` ≤ 200) and `GET /api/casey/review/:id` (the chat, its messages with every block, its cards, its reports) — `routes/api.casey.js`, the superuser casey guard (JWT + su + elevation); never a View-as session.
 - Readers: `services/casey/chats.listForReview / getForReview / flagsForReview`, `services/casey/cards.listForChat` — unscoped by user, used only by these routes.
 - The page: `public/caseyReview.html` (tile `adminCaseyChats`); the transcript is `public/casey.html?review=<id>&seq=<n>`. The flag: `kind = 'casey'` on `issue_reports` (`ref/migrations/2026-11-23_casey_v2_s4b_flag.sql`), `context.casey` `{chat_id, seq, model, prompt_version, by}`. Design: `ref/CASEY_V2_DESIGN.md` §4.8 and §9 S4b.

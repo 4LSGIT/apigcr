@@ -4,7 +4,6 @@
 // streams) → the real tools → an in-memory casey store (services/casey/chats
 // mocked with its API; the real store is tests/caseyChats.mysql.test.js).
 //   • the SU chain (superuserOnlyFor('casey'): JWT + su + X-SU-Elevation);
-//   • dark while casey_v2_enabled is '0' (403 before anything);
 //   • plain-JSON refusals before the stream: 400 text / chat_id, 404 another
 //     user's chat, 409 a running chat, 429 the spend cap;
 //   • the NDJSON contract: headers, one JSON object per line, the event order
@@ -18,10 +17,10 @@ const jwt = require('jsonwebtoken');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'casey-turn-route-secret';
 
-const flags = { v2: null, models: null };
+const flags = { models: null };
 jest.mock('../lib/firmConfig', () => {
   const actual = jest.requireActual('../lib/firmConfig');
-  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flags.v2 : k === 'casey_v2_models' ? flags.models : k === 'casey_v2_model_notes' ? null : k === 'casey_v2_model' ? 'claude-opus-5-5' : k === 'casey_v2_effort' ? null : k === 'internal_api_key' ? 'yci_TESTINTERNALKEYFORCASEY00' : k === 'internal_api_key_prev' ? null : actual.cfg(k))) };   // secret-scan: allow (a test constant)
+  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_models' ? flags.models : k === 'casey_v2_model_notes' ? null : k === 'casey_v2_model' ? 'claude-opus-5-5' : k === 'casey_v2_effort' ? null : k === 'internal_api_key' ? 'yci_TESTINTERNALKEYFORCASEY00' : k === 'internal_api_key_prev' ? null : actual.cfg(k))) };   // secret-scan: allow (a test constant)
 });
 jest.mock('../services/casey/cards', () => require('./helpers/caseyMemoryCards').make(jest.requireActual('../services/casey/cards')));   // S3b: the ledger, in memory (the real store: tests/caseyCards.mysql.test.js)
 const mockStore = { chats: new Map(), messages: new Map(), nextChat: 1, nextMsg: 1 };
@@ -129,7 +128,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); delete process.env.PORT; });
 const writeHits = []; const slowHits = [];
-beforeEach(() => { flags.v2 = null; flags.models = null; apiScript = []; apiBodies = []; aiRows.length = 0; spendState.cap = null; spendState.spent = 0; mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; mockStore.claimDelay = 0; cards._store.reset(); writeHits.length = 0; });
+beforeEach(() => { flags.models = null; apiScript = []; apiBodies = []; aiRows.length = 0; spendState.cap = null; spendState.spent = 0; mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; mockStore.claimDelay = 0; cards._store.reset(); writeHits.length = 0; });
 
 const su = jwt.sign({ sub: 6, username: 'IT', user_auth: 'authorized', roles: ['su'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
 const staff = jwt.sign({ sub: 7, username: 'rena', user_auth: 'authorized', roles: ['admin'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
@@ -164,22 +163,16 @@ test('S3a gate: any signed-in staff person, no elevation; a machine key and no t
   for (const [m, p, b] of [['POST', '/api/casey/turn', { text: 'hi' }], ['POST', '/api/casey/turn/stop', { chat_id: 1 }], ['GET', '/api/casey/chats'], ['GET', '/api/casey/chats/1'], ['DELETE', '/api/casey/chats/1'], ['GET', '/api/casey/boot'], ...CARD_ROUTES]) {
     expect(await asKey(m, p, b)).toMatchObject({ status: 403, body: { status: 'error', message: 'Casey requires a signed-in staff user.' } });
   }
-  flags.v2 = '0';
-  for (const [m, p, b] of [['POST', '/api/casey/turn', { text: 'hi' }], ['POST', '/api/casey/turn/stop', { chat_id: 1 }], ['GET', '/api/casey/chats'], ['GET', '/api/casey/chats/1'], ['DELETE', '/api/casey/chats/1'], ...CARD_ROUTES]) {
-    const r = await call(m, p, { token: staff, elevate: false, body: b });
-    expect(r).toMatchObject({ status: 403, body: { status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' } });
-  }
   const boot = await call('GET', '/api/casey/boot', { token: staff, elevate: false });
   expect(boot.status).toBe(200);
-  expect(boot.body).toMatchObject({ status: 'success', enabled: false, model: 'claude-opus-5-5', effort: 'medium', limits: { text_max: 4000, max_tool_calls: 40, max_turn_ms: 300000 } });
+  expect(boot.body).toMatchObject({ status: 'success', model: 'claude-opus-5-5', effort: 'medium', limits: { text_max: 4000, max_tool_calls: 40, max_turn_ms: 300000 } });
   expect(typeof boot.body.continue_text).toBe('string');
   expect(boot.body.models).toEqual([   // S3a-2: the menu for a new chat, the default marked; S3a-3: the built-in order Sonnet, Opus, Fable, with the notes
     { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'for basic needs', default: false },
     { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: 'for the difficult ones', default: true },
     { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'use sparingly — only for the most complex', default: false },
   ]);
-  flags.v2 = null;
-  expect((await call('GET', '/api/casey/boot', { token: staff, elevate: false })).body.enabled).toBe(true);
+  expect(boot.body).not.toHaveProperty('enabled');   // S6: no switch, no v1 to fall back to
   expect((await call('GET', '/api/casey/boot', { token: null })).status).toBe(401);
   // The S1 tool routes stay SU-only.
   expect((await call('GET', '/api/casey/tools', { token: staff, elevate: false })).status).toBe(403);
@@ -550,8 +543,7 @@ test('S4a notes routes: gated by system.settings (SU and `it` in; admin, staff, 
     expect([m, r.status]).toEqual([m, 401]);
   }
   // the flag off: the notes still answer (configuration, not Casey)
-  flags.v2 = '0';
-  try { expect((await call('GET', '/api/casey/notes', { elevate: false })).status).toBe(200); } finally { flags.v2 = null; }
+  expect((await call('GET', '/api/casey/notes', { elevate: false })).status).toBe(200);
   expect(notesDb.rows).toHaveLength(0);
 });
 

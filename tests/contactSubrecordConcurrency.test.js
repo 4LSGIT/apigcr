@@ -34,7 +34,7 @@ describe('contact subrecord optimistic concurrency', () => {
   test.each(['Phones', 'Emails', 'Addresses'])('%s route strips the server-owned version precondition before service validation', (suffix) => {
     const source = fs.readFileSync(path.join(ROOT, `routes/api.contact${suffix}.js`), 'utf8');
     // Phones / emails also strip Casey's consent-evidence marker (YisraMail P1).
-    const marker = suffix === 'Addresses' ? '' : 'casey_draft_id, ';
+    const marker = '';   // S6: casey_draft_id (Casey v1's attribution marker) left the phone / email routes with v1
     expect(source).toContain(`const { expected_updated_at, expected_primary_id, ${marker}...fields } = req.body || {};`);
     expect(source).toMatch(/fields, \{ updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id(, consentEvidence)?(,\s+consentActor: optout\.consentActor\(req\.auth\))? \}/);
   });

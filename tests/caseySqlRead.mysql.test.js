@@ -5,8 +5,8 @@
 //     npx jest tests/caseySqlRead.mysql.test.js --runInBand
 //
 // The report pool (startup/dbReport) is replaced by a pool on the same DB
-// (the yc_report ACCOUNT boundary is proven by tests/assistantContinuation.
-// mysql.test.js; this twin proves the rule layer, the real EXPLAIN gate and
+// (the yc_report ACCOUNT boundary was proven by v1's assistantContinuation
+// twin, retired at S6 — ref/plans.md; this twin proves the rule layer, the real EXPLAIN gate and
 // LIMIT, the report_runs rows and the row types mysql2 returns). Tables
 // report_runs, contacts and log are built from ref/database.sql as it stands
 // (CREATE TABLE only — no triggers, so no tz tables needed); contacts' many

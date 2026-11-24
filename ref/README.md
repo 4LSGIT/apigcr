@@ -10,7 +10,7 @@ Reference material that lives next to the code. Three tiers:
 - `CASEY_VISION.md` — the destination Ask Casey is built toward (Fred's
   north star) and the standing default that the burden of proof sits on
   excluding a capability. Governs *whether*; the actions plan governs *how*.
-- `ASK_CASEY_ACTIONS_PLAN.md` — roadmap of the open Ask Casey actions arc
+- `archive/ASK_CASEY_ACTIONS_PLAN.md` — Casey v1's actions arc (v1 retired 2026-11-24, Casey v2 S6)
   (action slices A*, platform slices P*, release gates, rulings pending). Moves
   to `archive/` when the arc closes; its worker paste-prompts live in
   gitignored `local/`.

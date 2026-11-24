@@ -17,7 +17,7 @@
 
 const path = require('path');
 const automation = require(path.join(__dirname, '..', 'services', 'automationReadService'));
-const svc = require(path.join(__dirname, '..', 'services', 'assistantService'));
+// (Casey v1's assistantService — its read-step validator, fingerprints and prompts — was retired at Casey v2 S6, 2026-11-24; this file keeps the automationReadService and stepPreviewService halves.)
 
 const SECRET_URL = 'https://hooks.example.com/t/SECRET-TOKEN-abc123';
 
@@ -178,13 +178,6 @@ describe('automation.run — history without payloads', () => {
     expect(rows[0]).toMatchObject({ row: 'execution', execution_id: 15209, status: 'delayed' });
     const none = dbOf([[/SELECT id FROM workflow_executions WHERE workflow_id/, []]]);
     await expect(automation.run(none, { workflow_id: 99 })).rejects.toThrow(/no executions yet/);
-    // The validator takes exactly one selector; fingerprints keep them apart.
-    expect(svc.validateStep({ id: 'q1', kind: 'automation.run', purpose: 'p', workflow_id: 57 }, 0))
-      .toMatchObject({ workflow_id: 57 });
-    expect(() => svc.validateStep({ id: 'q1', kind: 'automation.run', purpose: 'p', workflow_id: 57, execution_id: 1 }, 0))
-      .toThrow(/exactly one/);
-    expect(svc.stepFingerprint({ kind: 'automation.run', workflow_id: 57 }))
-      .not.toBe(svc.stepFingerprint({ kind: 'automation.run', execution_id: 57 }));
   });
 
   test('the execution summary and a pending resume are rows of their own', async () => {
@@ -342,47 +335,6 @@ describe('P12b — the sequence half carries the same redaction', () => {
   });
 });
 
-describe('the read-step validator and fingerprints know the four kinds', () => {
-  const step = (over) => svc.validateStep({ purpose: 'p', ...over }, 0);
-
-  test('each kind validates its own shape and rejects bad ids', () => {
-    expect(step({ id: 'q1', kind: 'automation.list', query: 'intake' }))
-      .toMatchObject({ kind: 'automation.list', query: 'intake', limit: 50 });
-    expect(step({ id: 'q1', kind: 'automation.definition', workflow_id: 27 }))
-      .toMatchObject({ kind: 'automation.definition', workflow_id: 27 });
-    expect(step({ id: 'q1', kind: 'automation.definition', workflow_id: 27, version: 0 }))
-      .toMatchObject({ version: 0 });
-    expect(step({ id: 'q1', kind: 'automation.run', execution_id: 500 }))
-      .toMatchObject({ execution_id: 500 });
-    expect(step({ id: 'q1', kind: 'automation.references', workflow_id: 27 }))
-      .toMatchObject({ workflow_id: 27 });
-    expect(() => step({ id: 'q1', kind: 'automation.definition' })).toThrow(/exactly one of workflow_id or sequence_template_id/);
-    expect(() => step({ id: 'q1', kind: 'automation.run', execution_id: 'DROP TABLE' })).toThrow(/positive execution_id/);
-    expect(() => step({ id: 'q1', kind: 'automation.nope' })).toThrow(/unavailable operation/);
-    // The sequence half (P12b): each kind takes the sequence id instead —
-    // exactly one, never both.
-    expect(step({ id: 'q1', kind: 'automation.definition', sequence_template_id: 5 }))
-      .toMatchObject({ sequence_template_id: 5 });
-    expect(step({ id: 'q1', kind: 'automation.run', enrollment_id: 9 })).toMatchObject({ enrollment_id: 9 });
-    expect(step({ id: 'q1', kind: 'automation.references', sequence_template_id: 5 }))
-      .toMatchObject({ sequence_template_id: 5 });
-    expect(step({ id: 'q1', kind: 'automation.list', type: 'sequences' })).toMatchObject({ type: 'sequences' });
-    expect(() => step({ id: 'q1', kind: 'automation.definition', workflow_id: 1, sequence_template_id: 5 }))
-      .toThrow(/exactly one/);
-    expect(() => step({ id: 'q1', kind: 'automation.run', execution_id: 1, enrollment_id: 9 })).toThrow(/exactly one/);
-    expect(() => step({ id: 'q1', kind: 'automation.list', type: 'everything' })).toThrow(/workflows" or "sequences/);
-  });
-
-  test('fingerprints distinguish targets so a plan cannot repeat one read', () => {
-    const fp = svc.stepFingerprint;
-    expect(fp({ kind: 'automation.definition', workflow_id: 27 }))
-      .not.toBe(fp({ kind: 'automation.definition', workflow_id: 28 }));
-    expect(fp({ kind: 'automation.definition', workflow_id: 27 }))
-      .not.toBe(fp({ kind: 'automation.definition', workflow_id: 27, version: 3 }));
-    expect(fp({ kind: 'automation.run', execution_id: 1 })).toBe(fp({ kind: 'automation.run', execution_id: 1 }));
-  });
-});
-
 describe('A17.2 — automation.preview_step is a dry run by construction', () => {
   const preview = require(path.join(__dirname, '..', 'services', 'stepPreviewService'));
   const STAFF = { type: 'jwt', userId: 2, roles: ['staff'] };
@@ -420,198 +372,9 @@ describe('A17.2 — automation.preview_step is a dry run by construction', () =>
     expect(rows[0].unresolved_placeholders).toContain('{{this.output.x}}');
   });
 
-  test('the validator caps and shapes the kind; the fingerprint distinguishes configs', () => {
-    const step = (over) => svc.validateStep({ id: 'q1', purpose: 'p', kind: 'automation.preview_step', ...over }, 0);
-    expect(step({ step_type: 'webhook', config: { url: 'x' } })).toMatchObject({ kind: 'automation.preview_step' });
-    expect(() => step({ step_type: 'trigger', config: {} })).toThrow(/step_type must be/);
-    expect(() => step({ step_type: 'webhook' })).toThrow(/needs a config object/);
-    expect(() => step({ step_type: 'webhook', config: { big: 'x'.repeat(20001) } })).toThrow(/exceeds 20000/);
-    expect(svc.stepFingerprint({ kind: 'automation.preview_step', step_type: 'webhook', config: { a: 1 } }))
-      .not.toBe(svc.stepFingerprint({ kind: 'automation.preview_step', step_type: 'webhook', config: { a: 2 } }));
-  });
 });
 
-describe('A17.1 — the run-explainer rides only with automation evidence', () => {
-  const approved = { viewer: { user_id: 7, display_name: 'S', initials: 'S', roles: ['staff'] }, workspace: null };
-
-  test('automation evidence appends the measured engine rules; other evidence does not', () => {
-    const plain = svc.answerSystemAppend(approved, [{ kind: 'sql.read', rows: [] }]);
-    expect(plain).not.toMatch(/AUTOMATION RUN READING RULES/);
-    const withAutomation = svc.answerSystemAppend(approved,
-      [{ kind: 'sql.read', rows: [] }, { kind: 'automation.run', rows: [] }]);
-    expect(withAutomation).toMatch(/AUTOMATION RUN READING RULES/);
-    // The server-verified context still leads; the rules are appended, not a
-    // replacement. (Byte equality with `plain` is not asserted — the context
-    // carries a clock.)
-    expect(withAutomation).toMatch(/current_staff/);
-    expect(withAutomation.indexOf('current_staff')).toBeLessThan(withAutomation.indexOf('AUTOMATION RUN READING RULES'));
-  });
-
-  test('automation evidence raises the answer output ceiling — a workflow card cannot fit in 2500 tokens', () => {
-    // Live failure 2026-10-22 15:11 UTC (alert 2008): the answer prompt's
-    // registered cap truncated a workflow.draft.v1 card's JSON mid-stream,
-    // aiService stamped json_parse, and the user saw the generic 502 twice.
-    expect(svc.answerMaxTokens([{ kind: 'sql.read', rows: [] }])).toBeUndefined();
-    expect(svc.answerMaxTokens([{ kind: 'automation.definition', rows: [] }])).toBeGreaterThanOrEqual(8000);
-  });
-
-  test('the raised ceiling is WIRED into the answer call (plan → execute, automation carrier)', async () => {
-    const aiService = require(path.join(__dirname, '..', 'services', 'aiService'));
-    const OLD_SECRET = process.env.JWT_SECRET;
-    process.env.JWT_SECRET = process.env.JWT_SECRET || 'automation-read-test-secret';
-    const db = {
-      query: jest.fn(async (sql) => {
-        if (/FROM users WHERE user/.test(sql)) return [[{ user: 7, user_name: 'S S', user_initials: 'SS', roles: 'staff' }]];
-        if (/FROM workflows w/.test(sql)) return [[{ workflow_id: 1, name: 'W', active: 1, current_version: 1, draft_version: null, description: '', step_count: 1 }]];
-        return [[]];
-      }),
-    };
-    const spy = jest.spyOn(aiService, 'call')
-      // plan(): direct answer to an action request → server backstop makes the
-      // automation.list carrier plan.
-      .mockResolvedValueOnce({ ok: true, callId: 1, json: { action: 'answer', answer: 'Card on the way.' } })
-      // execute(): the investigate controller finishes...
-      .mockResolvedValueOnce({ ok: true, callId: 2, json: { action: 'finish', reason: 'enough' } })
-      // ...and the answer call returns a minimal valid answer.
-      .mockResolvedValueOnce({ ok: true, callId: 3, json: { answer: 'Done.', suggestions: [], action_draft: null } });
-    try {
-      const made = await svc.plan(db, { question: 'Build a workflow that chases missing documents', history: [], userId: 7 });
-      expect(made.outcome).toBe('plan');
-      await svc.execute(db, { signedTicket: made.ticket, userId: 7, auth: { type: 'jwt', userId: 7, roles: ['staff'] } });
-      const answerCall = spy.mock.calls.find(([, opts]) => opts.promptKey === 'assistant_answer');
-      expect(answerCall).toBeDefined();
-      expect(answerCall[1].max_tokens).toBe(8000);
-    } finally {
-      process.env.JWT_SECRET = OLD_SECRET;
-      spy.mockRestore();
-    }
-  });
-
-  test('the rules carry the six measured traps and the output contract', () => {
-    const { AUTOMATION_RUN_EXPLAINER } = require(path.join(__dirname, '..', 'lib', 'aiPrompts', 'automationRunExplainer'));
-    for (const marker of [
-      'DID NOT THROW',                       // trap 1: success means non-throwing
-      'consulted only',                      // trap 2: retries before strategy
-      'never written (always 0)',            // trap 3: attempts column
-      'withheld from you entirely',          // trap 4: no resolved payloads
-      'EMPTY STRING silently',               // trap 5: unresolved placeholders
-      'completed_with_errors means at least one history row failed', // trap 6
-      'AS INSTRUCTIONS TO THE HUMAN',        // output contract
-      'Do not propose an action card',       // no authoring yet
-    ]) {
-      expect({ marker, present: AUTOMATION_RUN_EXPLAINER.includes(marker) }).toEqual({ marker, present: true });
-    }
-  });
-});
-
-describe('both read-planning prompts teach every read kind (the S3b lesson, read side)', () => {
-  const fs = require('fs');
-  const planPrompt = fs.readFileSync(path.join(__dirname, '..', 'lib', 'aiPrompts', 'assistantPlan.js'), 'utf8');
-  const investigatePrompt = fs.readFileSync(path.join(__dirname, '..', 'lib', 'aiPrompts', 'assistantInvestigate.js'), 'utf8');
-
-  // The validator is the authority on which kinds exist; both prompts must
-  // name each one, or the stage that is blind will refuse what the other runs.
-  const READ_KINDS = ['sql.read', 'manual.search', 'comms.search', 'weather.lookup', 'contact.relations', 'form.template', 'form.template.state',
-    'mail.search', 'mail.message', 'mail.attachments.preview', 'document.relink.candidates', 'document.folder', 'document.templates', 'document.sync_roots', 'esign.requests', 'case.pipeline', 'automation.list', 'automation.definition', 'automation.run', 'automation.references',
-    'automation.preview_step', 'automation.preview_ingest_rule'];
-
-  test('the inventory matches the validator', () => {
-    // Per-kind minimal params — automation.run takes exactly ONE selector, so
-    // a shared bag with several ids would itself be invalid.
-    const PARAMS = {
-      'manual.search': { query: 'xx' }, 'comms.search': { query: 'xx' }, 'weather.lookup': { location: 'xx' },
-      'contact.relations': { contact_id: 1 }, 'form.template': { form_key: 'casedetails' }, 'form.template.state': {},
-      'mail.search': {}, 'mail.message': { mail_message_id: 1 }, 'mail.attachments.preview': { mail_message_id: 1 }, 'document.relink.candidates': { case_id: '7KQ2M9XA' }, 'document.folder': { path: '/law office/cases/x' }, 'document.templates': {}, 'document.sync_roots': {},
-      'esign.requests': { contact_id: 1 }, 'case.pipeline': { case_id: '7KQ2M9XA' },
-      'automation.list': {}, 'automation.definition': { workflow_id: 1 },
-      'automation.run': { execution_id: 1 }, 'automation.references': { workflow_id: 1 },
-      'automation.preview_step': { step_type: 'internal_function', config: { function_name: 'noop' } },
-      'automation.preview_ingest_rule': { email_ingest_rule_id: 1, email_ingest_execution_id: 1 },
-    };
-    for (const kind of READ_KINDS.filter((k) => k !== 'sql.read')) {
-      expect(() => svc.validateStep({ id: 'q1', kind, purpose: 'p', ...PARAMS[kind] }, 0)).not.toThrow();
-    }
-    expect(() => svc.validateStep({ id: 'q1', kind: 'automation.unknown', purpose: 'p' }, 0))
-      .toThrow(/unavailable operation/);
-  });
-
-  test('every kind is named in BOTH the plan and investigate prompts', () => {
-    for (const kind of READ_KINDS) {
-      expect({ kind, plan: planPrompt.includes(kind) }).toEqual({ kind, plan: true });
-      expect({ kind, investigate: investigatePrompt.includes(kind) }).toEqual({ kind, investigate: true });
-    }
-  });
-});
-
-describe('A20.0/A20.1 — the ingest-rule family rides the same kinds', () => {
-  const step = (over) => svc.validateStep({ id: 'q1', purpose: 'p', ...over }, 0);
-
-  test('list takes the six ingest types; since/until only on the executions finder', () => {
-    for (const type of ['email_ingest_rules', 'phone_ingest_rules', 'email_ingest_suppressions',
-      'phone_ingest_suppressions', 'email_ingest_executions', 'phone_ingest_executions']) {
-      expect(step({ kind: 'automation.list', type })).toMatchObject({ type });
-    }
-    expect(step({ kind: 'automation.list', type: 'email_ingest_executions', query: 'mieb', since: '2026-10-25', until: '2026-10-25 18:00' }))
-      .toMatchObject({ since: '2026-10-25', until: '2026-10-25 18:00' });
-    expect(() => step({ kind: 'automation.list', type: 'email_ingest_rules', since: '2026-10-25' })).toThrow(/apply only to the email_ingest_executions/);
-    expect(() => step({ kind: 'automation.list', since: '2026-10-25' })).toThrow(/apply only to/);
-    expect(() => step({ kind: 'automation.list', type: 'email_ingest_executions', since: 'yesterday' })).toThrow(/firm-local date/);
-    expect(() => step({ kind: 'automation.list', type: 'email_ingest_executions', since: '2026-10-26', until: '2026-10-25' })).toThrow(/until is before since/);
-    expect(() => step({ kind: 'automation.list', type: 'email_ingest_sources' })).toThrow(/automation.list type must be/);
-  });
-
-  test('definition / run / references take the ingest id keys — exactly one, and ingest rules are unversioned', () => {
-    expect(step({ kind: 'automation.definition', email_ingest_rule_id: 15 })).toMatchObject({ email_ingest_rule_id: 15 });
-    expect(step({ kind: 'automation.definition', phone_ingest_rule_id: 3 })).toMatchObject({ phone_ingest_rule_id: 3 });
-    expect(() => step({ kind: 'automation.definition', email_ingest_rule_id: 15, version: 1 })).toThrow(/unversioned/);
-    expect(() => step({ kind: 'automation.definition', email_ingest_rule_id: 15, workflow_id: 2 })).toThrow(/exactly one/);
-    expect(() => step({ kind: 'automation.definition', email_ingest_rule_id: 'x' })).toThrow(/positive email_ingest_rule_id/);
-    for (const key of ['email_ingest_execution_id', 'phone_ingest_execution_id', 'email_ingest_rule_id', 'phone_ingest_rule_id']) {
-      expect(step({ kind: 'automation.run', [key]: 9 })).toMatchObject({ [key]: 9 });
-    }
-    expect(() => step({ kind: 'automation.run', email_ingest_execution_id: 9, email_ingest_rule_id: 1 })).toThrow(/exactly one/);
-    expect(step({ kind: 'automation.references', phone_ingest_rule_id: 2 })).toMatchObject({ phone_ingest_rule_id: 2 });
-  });
-
-  test('preview_ingest_rule names a STORED rule only and can express nothing but a message source', () => {
-    const base = { kind: 'automation.preview_ingest_rule', email_ingest_rule_id: 15 };
-    expect(step({ ...base, email_ingest_execution_id: 28500 }))
-      .toEqual({ id: 'q1', purpose: 'p', kind: 'automation.preview_ingest_rule', channel: 'email', email_ingest_rule_id: 15, email_ingest_execution_id: 28500 });
-    expect(step({ kind: 'automation.preview_ingest_rule', phone_ingest_rule_id: 3, sample: { type: 'sms', message: 'hi' } }))
-      .toMatchObject({ channel: 'phone', sample: { type: 'sms' } });
-    expect(step({ ...base, window: { since: '2026-10-25' } })).toMatchObject({ window: { limit: 20, since: '2026-10-25' } });
-    // A supplied rule body is refused — every native body field.
-    for (const k of ['match_mode', 'match_config', 'transform_mode', 'transform_config', 'code', 'rule', 'params_mappings']) {
-      expect(() => step({ ...base, email_ingest_execution_id: 1, [k]: k === 'match_mode' ? 'code' : { code: 'return process.env' } }))
-        .toThrow(/STORED ingest rule only/);
-    }
-    expect(() => step({ kind: 'automation.preview_ingest_rule', email_ingest_execution_id: 1 })).toThrow(/exactly one of email_ingest_rule_id or phone_ingest_rule_id/);
-    expect(() => step({ ...base, phone_ingest_rule_id: 2, email_ingest_execution_id: 1 })).toThrow(/exactly one of email_ingest_rule_id/);
-    expect(() => step({ ...base, phone_ingest_execution_id: 1 })).toThrow(/cannot preview a email rule against a phone execution/);
-    expect(() => step(base)).toThrow(/exactly one message source/);
-    expect(() => step({ ...base, email_ingest_execution_id: 1, sample: {} })).toThrow(/exactly one message source/);
-    expect(() => step({ ...base, sample: [1] })).toThrow(/sample must be a JSON object/);
-    expect(() => step({ ...base, sample: { text: 'x'.repeat(8001) } })).toThrow(/exceeds 8000/);
-    expect(() => step({ ...base, window: { limit: 41 } })).toThrow(/window limit must be 1-40/);
-    expect(() => step({ ...base, window: { limit: 5, match_config: {} } })).toThrow(/window takes only limit, since, until/);
-    expect(() => step({ ...base, window: { since: 'last week' } })).toThrow(/firm-local date/);
-  });
-
-  test('fingerprints keep ingest reads apart from workflow / sequence reads of the same number', () => {
-    const fp = svc.stepFingerprint;
-    expect(fp({ kind: 'automation.definition', email_ingest_rule_id: 5 })).not.toBe(fp({ kind: 'automation.definition', workflow_id: 5 }));
-    expect(fp({ kind: 'automation.definition', email_ingest_rule_id: 5 })).not.toBe(fp({ kind: 'automation.definition', phone_ingest_rule_id: 5 }));
-    expect(fp({ kind: 'automation.definition', email_ingest_rule_id: 5 })).not.toBe(fp({ kind: 'automation.definition', email_ingest_rule_id: 6 }));
-    expect(fp({ kind: 'automation.references', phone_ingest_rule_id: 5 })).not.toBe(fp({ kind: 'automation.references', phone_ingest_rule_id: 6 }));
-    expect(fp({ kind: 'automation.definition', phone_ingest_rule_id: 5 })).not.toBe(fp({ kind: 'automation.definition', sequence_template_id: 5 }));
-    expect(fp({ kind: 'automation.run', email_ingest_execution_id: 5 })).not.toBe(fp({ kind: 'automation.run', execution_id: 5 }));
-    expect(fp({ kind: 'automation.run', email_ingest_rule_id: 5 })).not.toBe(fp({ kind: 'automation.run', email_ingest_execution_id: 5 }));
-    expect(fp({ kind: 'automation.list', type: 'email_ingest_executions', since: '2026-10-01' }))
-      .not.toBe(fp({ kind: 'automation.list', type: 'email_ingest_executions', since: '2026-10-02' }));
-    expect(fp({ kind: 'automation.preview_ingest_rule', email_ingest_rule_id: 5, email_ingest_execution_id: 1 }))
-      .not.toBe(fp({ kind: 'automation.preview_ingest_rule', email_ingest_rule_id: 5, email_ingest_execution_id: 2 }));
-  });
-
+describe('A20.0 — the ingest-rule projections (the read kinds went with Casey v1 at S6; the projections stay for the executions services)', () => {
   test('http action configs are redacted to method + host + credential label; other types keep their keys minus url/headers', () => {
     const creds = new Map([[3, 'Clio OAuth']]);
     const http = automation.projectIngestActionConfig('http',
@@ -640,94 +403,5 @@ describe('A20.0/A20.1 — the ingest-rule family rides the same kinds', () => {
     expect(huge.cell).toMatch(/the last 7 chars are not shown/);
     expect(automation.ingestConfigCell('conditions', null)).toEqual({ cell: null, parts: [] });
     expect(automation.ingestConfigCell('conditions', { operator: 'and', conditions: [] }).cell).toBe('{"operator":"and","conditions":[]}');
-  });
-
-  test('the ingest reading rules ride only with ingest evidence, after the run rules', () => {
-    const approved = { viewer: { user_id: 7, display_name: 'S', initials: 'S', roles: ['staff'] }, workspace: null };
-    const wfOnly = svc.answerSystemAppend(approved, [{ kind: 'automation.definition', rows: [{ workflow_id: 27 }] }]);
-    expect(wfOnly).toMatch(/AUTOMATION RUN READING RULES/);
-    expect(wfOnly).not.toMatch(/INGEST RULE READING RULES/);
-    for (const ev of [
-      [{ kind: 'automation.run', rows: [{ row: 'execution', email_ingest_execution_id: 1 }] }],
-      [{ kind: 'automation.list', rows: [{ phone_ingest_rule_id: 2 }] }],
-      [{ kind: 'automation.preview_ingest_rule', rows: [] }],
-    ]) {
-      const text = svc.answerSystemAppend(approved, ev);
-      expect(text).toMatch(/INGEST RULE READING RULES/);
-      expect(text.indexOf('AUTOMATION RUN READING RULES')).toBeLessThan(text.indexOf('INGEST RULE READING RULES'));
-    }
-    // An ingest-looking key in NON-automation evidence does not count.
-    expect(svc.answerSystemAppend(approved, [{ kind: 'sql.read', rows: [{ email_ingest_rule_id: 1 }] }])).not.toMatch(/INGEST RULE/);
-  });
-
-  test('the ingest rules carry the code-verified semantics and the authoring contract', () => {
-    const { INGEST_RULE_EXPLAINER } = require(path.join(__dirname, '..', 'lib', 'aiPrompts', 'automationRunExplainer'));
-    for (const marker of [
-      'suppression hides, it does not cancel',
-      'dedupe is PER SOURCE',
-      'skipped_firm_to_firm\n   = Layer 3 DID run',
-      'EVERY matching rule fires',
-      'is NOT recorded on the execution\n   row',
-      'NULL match_config in conditions mode is a NON-match, not match-all',
-      'NONE of\n   its actions fire',
-      'Action failures are isolated',
-      'updated_at is\n   NOT "last edited"',
-      'definition_updated_at IS',
-      'ONE reviewed ingest_rule.* card',
-    ]) {
-      expect({ marker, present: INGEST_RULE_EXPLAINER.includes(marker) }).toEqual({ marker, present: true });
-    }
-  });
-});
-
-describe('A20 — the ingest reads are WIRED through plan → execute → answer', () => {
-  const aiService = require(path.join(__dirname, '..', 'services', 'aiService'));
-
-  test('a planned ingest run + preview reach the answer as evidence, with the ingest rules appended', async () => {
-    const OLD_SECRET = process.env.JWT_SECRET;
-    process.env.JWT_SECRET = process.env.JWT_SECRET || 'automation-read-test-secret';
-    const seen = [];
-    const db = {
-      query: jest.fn(async (sql, params) => {
-        seen.push({ sql: String(sql), params });
-        const s = String(sql);
-        if (/FROM users WHERE user/.test(s)) return [[{ user: 7, user_name: 'S S', user_initials: 'SS', roles: 'staff' }]];
-        if (/FROM email_ingest_rules WHERE id = \?/.test(s)) return [[{ id: 15, name: 'court emails', active: 1, position: 0,
-          match_mode: 'conditions', match_config: { operator: 'and', conditions: [] }, transform_mode: 'passthrough', transform_config: null }]];
-        if (/FROM email_ingest_rule_actions WHERE rule_id = \?/.test(s)) return [[]];
-        if (/FROM email_ingest_executions eie/.test(s)) return [[{ exec_id: 28500, created_at: new Date('2026-10-26T08:52:16Z'), status: 'logged',
-          raw_input: { kind: 'email', from: { email: 'ecf@mieb.uscourts.gov' }, subject: 'Notice', text: 't' }, el_id: 1 }]];
-        if (/SELECT message_id FROM email_ingest_executions/.test(s)) return [[{ message_id: 'm-1' }]];
-        if (/FROM email_ingest_executions e LEFT JOIN email_log/.test(s)) return [[{ id: 28500, status: 'logged',
-          created_at: new Date('2026-10-26T08:52:16Z'), metadata: { matched_rules: [15], action_outcomes: [] }, action_failure_count: 0 }]];
-        if (/FROM email_ingest_rules WHERE id IN/.test(s)) return [[{ id: 15, name: 'court emails', active: 1 }]];
-        return [[]];
-      }),
-    };
-    const steps = [
-      { id: 'q1', kind: 'automation.run', purpose: 'the message', email_ingest_execution_id: 28500 },
-      { id: 'q2', kind: 'automation.preview_ingest_rule', purpose: 'dry run', email_ingest_rule_id: 15, email_ingest_execution_id: 28500 },
-    ];
-    const spy = jest.spyOn(aiService, 'call')
-      .mockResolvedValueOnce({ ok: true, callId: 1, json: { action: 'query', summary: 's', steps } })
-      .mockResolvedValueOnce({ ok: true, callId: 2, json: { action: 'finish', reason: 'enough' } })
-      .mockResolvedValueOnce({ ok: true, callId: 3, json: { answer: 'It matched.', citations: [], suggestions: [], action_draft: null } });
-    try {
-      const made = await svc.plan(db, { question: 'Why did the court email rule fire on execution 28500?', history: [], userId: 7 });
-      expect(made.outcome).toBe('plan');
-      // The widened automation budget applies to an ingest plan too.
-      await svc.execute(db, { signedTicket: made.ticket, userId: 7, auth: { type: 'jwt', userId: 7, roles: ['staff'] } });
-      const answerCall = spy.mock.calls.find(([, opts]) => opts.promptKey === 'assistant_answer');
-      expect(answerCall[1].systemAppend).toMatch(/INGEST RULE READING RULES/);
-      const input = answerCall[1].userInput;
-      expect(input).toContain('"email_ingest_execution_id":"28500"');
-      expect(input).toMatch(/"row":"preview".*"email_ingest_execution_id":"28500","message_source":"email execution #28500".*"matched":"1"/);
-      // The run read hit the execution projection, never the sources table.
-      expect(seen.some((q) => /FROM email_ingest_executions e LEFT JOIN email_log/.test(q.sql) && q.params[0] === 28500)).toBe(true);
-      expect(seen.filter((q) => /email_ingest_sources/.test(q.sql))).toEqual([]);
-    } finally {
-      process.env.JWT_SECRET = OLD_SECRET;
-      spy.mockRestore();
-    }
   });
 });

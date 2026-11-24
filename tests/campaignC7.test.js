@@ -177,17 +177,5 @@ describe('from is save-required unless promotional is the literal true', () => {
   });
 });
 
-// ─── Casey's taught params ───────────────────────────────────
-
-describe('Casey is taught promotional but never design_id', () => {
-  test('the prompt line: promotional/topic/marketing_sender taught; design_id and attachment_urls filtered', () => {
-    const path = require('path');
-    const system = require(path.join(__dirname, '..', 'lib', 'aiPrompts', 'assistantAnswer')).system;
-    const line = system.split('\n').find((l) => /^  send_email \(external-send\)/.test(l));
-    expect(line).toMatch(/promotional\?:boolean/);
-    expect(line).toMatch(/topic\?:string/);
-    expect(line).toMatch(/marketing_sender\?:string/);
-    expect(line).not.toMatch(/design_id/);
-    expect(line).not.toMatch(/attachment_urls/);
-  });
-});
+// (Casey v1's taught send_email params were pinned here until v1 retired at Casey v2 S6, 2026-11-24;
+// v2 reads the route catalog, so there is no taught param line to pin.)

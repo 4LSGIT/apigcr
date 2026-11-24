@@ -236,7 +236,7 @@ describe('enforcement — the chain\'s class is what the route does', () => {
   });
 
   test('staff (jwtOrApiKey + jwtOnly refinements): a staff JWT gets past auth', async () => {
-    for (const k of ['GET /api/mail/mailboxes', 'GET /api/assistant/chats', 'GET /api/contacts/:id/communications']) {
+    for (const k of ['GET /api/mail/mailboxes', 'GET /api/casey/chats', 'GET /api/contacts/:id/communications']) {
       const r = byKey.get(k);
       expect(r.authClass).toBe('staff');
       const { status } = await hit('GET', r.path.replace(':id', '1'), STAFF_JWT);
@@ -310,9 +310,7 @@ describe('snapshots — a change here is a deliberate review', () => {
       'POST /admin/api-tester/saved', 'DELETE /admin/api-tester/saved/:id', 'PUT /admin/api-tester/saved/:id', 'POST /admin/api-tester/saved/:id/run',
       'POST /admin/api-tester/send-request', 'POST /admin/db/batch', 'POST /admin/db/query', 'POST /admin/db/saved-queries',
       'DELETE /admin/db/saved-queries/:id', 'PUT /admin/db/saved-queries/:id', 'POST /admin/db/schema/save-to-ref', 'POST /admin/elevate',
-      'POST /api/ai/file', 'POST /api/api-keys', 'POST /api/api-keys/rotate-internal', 'POST /api/assistant/actions/:draftId/claim', 'POST /api/assistant/actions/:draftId/result', 'POST /api/assistant/actions/reconcile',
-      'POST /api/assistant/chats', 'DELETE /api/assistant/chats/:id(\\d+)', 'PATCH /api/assistant/chats/:id(\\d+)', 'POST /api/assistant/chats/:id(\\d+)/messages',
-      'POST /api/assistant/execute', 'POST /api/assistant/plan', 'POST /api/auth/change-password', 'POST /api/auth/update-profile',
+      'POST /api/ai/file', 'POST /api/api-keys', 'POST /api/api-keys/rotate-internal', 'POST /api/auth/change-password', 'POST /api/auth/update-profile',
       'POST /api/casey/cards/:id/claim', 'POST /api/casey/cards/:id/decline', 'POST /api/casey/cards/:id/settle', 'DELETE /api/casey/chats/:id', 'PUT /api/casey/notes', 'POST /api/casey/notes/restore', 'POST /api/casey/tools/:name', 'POST /api/casey/turn', 'POST /api/casey/turn/resume', 'POST /api/casey/turn/stop',
       'POST /api/esign/:id/resend', 'POST /api/esign/:id/satisfied-external', 'POST /api/esign/send', 'POST /api/esign/templates/:id/pdf', 'POST /api/hooks/:id/duplicate',
       'POST /api/impersonation/exit', 'POST /api/impersonation/mode', 'POST /api/impersonation/users/:id/start', 'POST /api/pdf/parse',
@@ -325,7 +323,7 @@ describe('snapshots — a change here is a deliberate review', () => {
 
   test('closed staff GETs (not auto, not a card) — credential-returning reads and plumbing', () => {
     expect(rows.filter(r => STAFF.has(r.authClass) && r.authClass !== 'su' && r.method === 'GET' && !r.autoGet).map(at)).toEqual([
-      'GET /api/assistant/chats', 'GET /api/assistant/chats/:id(\\d+)', 'GET /api/casey/boot', 'GET /api/casey/cards/:id', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/casey/notes', 'GET /api/casey/notes/version', 'GET /api/casey/notes/versions', 'GET /api/comms-archive/media/:id/url', 'GET /api/credentials', 'GET /api/email-credentials',
+      'GET /api/casey/boot', 'GET /api/casey/cards/:id', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/casey/notes', 'GET /api/casey/notes/version', 'GET /api/casey/notes/versions', 'GET /api/comms-archive/media/:id/url', 'GET /api/credentials', 'GET /api/email-credentials',
       'GET /api/hooks', 'GET /api/hooks/:hookId/targets', 'GET /api/hooks/:id', 'GET /api/hooks/executions/:id', 'GET /api/impersonation/users', 'GET /auth/validate', 'GET /clio-code',
       'GET /internal/email-test/credentials', 'GET /internal/email-test/credentials/oauth',
     ]);
@@ -356,7 +354,7 @@ describe('snapshots — a change here is a deliberate review', () => {
 
   test('LOCAL_GATES is the pinned name table, and every name in it is still mounted somewhere', () => {
     expect(Object.keys(catalog.LOCAL_GATES).sort()).toEqual([
-      'adminAuth', 'chatRate', 'checkApiKey', 'gate', 'gateByScope', 'limitDraft', 'limitPreview', 'memberAuth', 'multerMiddleware',
+      'adminAuth', 'checkApiKey', 'gate', 'gateByScope', 'limitDraft', 'limitPreview', 'memberAuth', 'multerMiddleware',
       'perKeyGate', 'requireAdmin', 'requireJwt', 'requireUser', 'requireViewAsSession', 'staffOnly', 'textParser', 'tplUploadSingle', 'uploadSingle',
     ]);
     // routes/_aitest.js and routes/_errtest.js register their `gate` only when
@@ -373,7 +371,7 @@ describe('snapshots — a change here is a deliberate review', () => {
     // definition is a review (review 2026-11-22, finding 7).
     const DEFINED_IN = {
       adminAuth: ['api.streak.js'], memberAuth: ['api.streak.js'], checkApiKey: ['ringcentral.js'],
-      chatRate: ['api.assistant.js'], staffOnly: ['api.assistant.js', 'api.casey.js'],
+      staffOnly: ['api.casey.js'],
       gate: ['_aitest.js', '_courtexec.js', '_errtest.js'],
       gateByScope: ['api.uiConfig.js'], perKeyGate: ['api.appSettings.js'],
       limitDraft: ['api.reports.js'], limitPreview: ['api.reports.js'], requireUser: ['api.reports.js'],

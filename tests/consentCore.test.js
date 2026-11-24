@@ -21,11 +21,10 @@
  *            change → exactly one event, no change → none, a new row is born
  *            from the state and never opts in (the re-consent guard), a
  *            transfer keeps the opt-out, end-and-replace records row_replace,
- *            Casey's writes carry { via: 'casey', draft_id } — only while the
- *            card's ledger claim is in flight.
+ *            (Casey v1's { via: 'casey', draft_id } attribution went with v1
+ *            at S6, 2026-11-24 — v2's card ledger records step → route.)
  *   routes   the phone/email list routes annotate each active row with the
- *            server's consent read; the create/patch routes take
- *            casey_draft_id out of the body and attribute through the ledger.
+ *            server's consent read.
  *
  * Mutation-checked: the slice report lists each mutation and the test that
  * killed it (a kill = jest's exit code).
@@ -38,7 +37,6 @@ const optout = require('../services/optoutService');
 const phoneSvc = require('../services/contactPhoneService');
 const emailSvc = require('../services/contactEmailService');
 const contactService = require('../services/contactService');
-const ledger = require('../services/assistantActionLedger');
 const { answerOptout } = require('./helpers/optoutFake');
 const { makeWorld } = require('./helpers/contactConsentWorld');
 
@@ -550,40 +548,17 @@ describe('campaigns (C1): operational email asks NO consent (D18), marketing ema
 // Casey attribution + the routes
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Casey attribution (assistantActionLedger.attribution)', () => {
-  const D = '0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e';
-  const pool = (rows) => {
-    const calls = [];
-    return { calls, getConnection: async () => { throw new Error('no'); },
-      query: async (sql, p) => { calls.push([sql.replace(/\s+/g, ' ').trim(), p]); return [rows]; } };
-  };
-  test('only this user\'s IN-FLIGHT claim of a listed kind attributes; anything else is a plain staff write', async () => {
-    const db = pool([{ kind: 'contact.phone.update.v1' }]);
-    expect(await ledger.attribution(db, 22, D, ['contact.phone.update.v1'])).toEqual({ via: 'casey', draft_id: D });
-    expect(db.calls).toEqual([["SELECT kind FROM assistant_action_ledger WHERE user_id = ? AND draft_id = ? AND status = 'in_flight'", [22, D]]]);
-    expect(await ledger.attribution(db, 22, D, ['contact.email.update.v1'])).toBeNull();          // another kind
-    expect(await ledger.attribution(pool([]), 22, D, ['contact.phone.update.v1'])).toBeNull();    // not in flight / not theirs
-    const none = pool([{ kind: 'contact.phone.update.v1' }]);
-    for (const [user, id] of [[22, 'not-a-uuid'], [22, null], [22, ''], ['x', D], [999, D]]) {
-      expect(await ledger.attribution(none, user, id, ['contact.phone.update.v1'])).toBeNull();
-    }
-    expect(none.calls).toEqual([]);
-    expect(await ledger.attribution({ query: async () => [[{ kind: 'contact.phone.update.v1' }]] }, 22, D, ['contact.phone.update.v1'])).toBeNull(); // not a pool
-  });
-});
-
-describe('routes — consent on the list, casey_draft_id on the writes', () => {
+describe('routes — consent on the list (v1\'s casey_draft_id attribution on the writes went with v1 at S6)', () => {
   const express = require('express');
   const jwt = require('jsonwebtoken');
   const D = '0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e';
-  let server; let base; let W; let claim;
+  let server; let base; let W;
   beforeAll(async () => {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
       req.db = { getConnection: async () => { throw new Error('no'); }, withTransaction: (fn) => W.db.withTransaction(fn),
         query: async (sql, p) => {
-          if (/FROM assistant_action_ledger/.test(sql)) return [claim && Number(p[0]) === claim.user && p[1] === claim.draft ? [{ kind: claim.kind }] : []];
           if (/^\s*INSERT INTO jwt_api_audit_log/.test(sql)) return [{ insertId: 1 }];
           return W.db.query(sql, p);
         } };
@@ -617,25 +592,22 @@ describe('routes — consent on the list, casey_draft_id on the writes', () => {
       scopes: { marketing: { opted_out: true, state: 'opted_out', occurred_at: at, source: null } } }]]);
   });
 
-  test('PATCH: casey_draft_id never reaches the service; while the card\'s claim is in flight the event says so', async () => {
+  test('S6: a plain staff write carries the plain evidence — {row_id, via} and nothing else; a stray casey_draft_id is an unknown field (400), never an attribution', async () => {
     W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0 }] });
-    claim = { user: 22, draft: D, kind: 'contact.phone.update.v1' };
-    const r = await call('PATCH', '/api/contact-phones/11', { sms_optout: true, casey_draft_id: D });
-    expect(r.status).toBe(200);
-    expect(W.events[0]).toMatchObject({ actor_user_id: 22, evidence: { row_id: 11, via: 'casey', draft_id: D } });
-    claim = null;   // a marker without a live claim is a plain staff write
-    await call('PATCH', '/api/contact-phones/11', { sms_optout: false, casey_draft_id: D });
-    expect(W.events[1].evidence).toEqual({ row_id: 11, via: 'row_patch' });
+    const patch = await call('PATCH', '/api/contact-phones/11', { sms_optout: true });
+    expect(patch.status).toBe(200);
+    expect(W.events[0].evidence).toEqual({ row_id: 11, via: 'row_patch' });
+    const post = await call('POST', '/api/contact-emails', { contact_id: 1, email: 'pat@example.com', email_optout: true });
+    expect(post.status).toBe(201);
+    expect(W.events[1].evidence).toEqual({ row_id: post.json.email.id, via: 'row_create' });
+    const pc = await call('POST', '/api/contact-phones', { contact_id: 1, phone: '3135550009', sms_optout: true });
+    expect(pc.status).toBe(201);
+    const newPhoneId = (pc.json.phone && pc.json.phone.id) || pc.json.id;
+    expect(W.events[2].evidence).toEqual({ row_id: newPhoneId, via: 'row_create' });
+    expect((await call('PATCH', '/api/contact-phones/11', { sms_optout: false, casey_draft_id: 'd-1' })).status).toBe(400);
+    expect(W.events).toHaveLength(3);
   });
 
-  test('POST: the same on create (contact.email.create.v1)', async () => {
-    W = makeWorld({ contacts: [C1] });
-    claim = { user: 22, draft: D, kind: 'contact.email.create.v1' };
-    const r = await call('POST', '/api/contact-emails', { contact_id: 1, email: 'pat@example.com', email_optout: true, casey_draft_id: D });
-    expect(r.status).toBe(201);
-    expect(W.events[0].evidence).toEqual({ row_id: r.json.email.id, via: 'casey', draft_id: D });
-    claim = null;
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

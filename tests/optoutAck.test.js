@@ -96,14 +96,4 @@ describe('every staff send surface goes through the helper — Ask Casey\'s card
     }
   });
 
-  test('Ask Casey\'s page loads the helper and sends ONLY through it; nothing on the page sets acknowledge_optout itself', () => {
-    const s = read('public/assistant.html');
-    expect(s.includes('<script src="/js/optoutAck.js"></script>')).toBe(true);
-    expect(count(s, /ycOptoutAck\.send\(/g)).toBe(1);
-    expect(s).toMatch(/dispatch: sendActionDispatch,/);
-    // The acknowledgement is the helper's alone (after the confirm), never a literal here.
-    expect(s).not.toMatch(/acknowledge_optout\s*:/);
-    expect(count(s, /\/api\/phone-lines\/\$\{line\}\/sms/g)).toBe(1);
-    expect(count(s, /'\/api\/mail\/send'/g)).toBe(1);
-  });
 });

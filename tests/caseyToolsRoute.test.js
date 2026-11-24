@@ -2,7 +2,7 @@
 //   GET  /api/casey/tools             the definitions + the flag state
 //   POST /api/casey/tools/:name       runs the tool AS THE CALLER
 // Over a real socket with the real SU chain (superuserOnlyFor('casey'): JWT +
-// su role + X-SU-Elevation + rate limit). firmConfig is mocked for the flag.
+// su role + X-SU-Elevation + rate limit).
 'use strict';
 
 const http = require('http');
@@ -10,12 +10,6 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'casey-tools-route-secret';
-
-const flag = { value: null };
-jest.mock('../lib/firmConfig', () => {
-  const actual = jest.requireActual('../lib/firmConfig');
-  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flag.value : actual.cfg(k))) };
-});
 
 const { mintElevationToken } = require('../lib/auth.superuser');
 const router = require('../routes/api.casey');
@@ -31,7 +25,6 @@ beforeAll(async () => {
   port = server.address().port;
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); });
-beforeEach(() => { flag.value = null; });
 
 const su = jwt.sign({ sub: 6, username: 'IT', user_auth: 'authorized', roles: ['su'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
 const staff = jwt.sign({ sub: 7, username: 'rena', user_auth: 'authorized', roles: ['admin'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
@@ -56,11 +49,9 @@ test('GET /api/casey/tools: SU + elevation only; lists the six definitions and t
   const r = await call('GET', '/api/casey/tools');
   expect(r.status).toBe(200);
   expect(r.body.status).toBe('success');
-  expect(r.body.enabled).toBe(true);
+  expect(r.body).not.toHaveProperty('enabled');   // S6: no switch
   expect(r.body.tools.map((t) => t.name)).toEqual(['whoami', 'sql_read', 'api_get', 'lookup_routes', 'read_source', 'search_docs', 'api_write', 'flag_for_review']);   // S4b: flag_for_review
   expect(Object.keys(r.body.tools[0])).toEqual(['name', 'description', 'input_schema']);
-  flag.value = '0';
-  expect((await call('GET', '/api/casey/tools')).body.enabled).toBe(false);
 });
 
 test('POST runs the tool as the caller (whoami sees the SU, its elevation, the IT username)', async () => {
@@ -71,16 +62,6 @@ test('POST runs the tool as the caller (whoami sees the SU, its elevation, the I
   expect(typeof r.body.ms).toBe('number');
   const noBody = await call('POST', '/api/casey/tools/whoami');
   expect(noBody.body.ok).toBe(true);
-});
-
-test('dark when casey_v2_enabled is "0": 403 before any tool runs; "1" and unset are on', async () => {
-  flag.value = '0';
-  const r = await call('POST', '/api/casey/tools/whoami', { body: { input: {} } });
-  expect(r).toEqual({ status: 403, body: { status: 'error', message: 'Casey v2 is off (casey_v2_enabled = 0)' } });
-  flag.value = '1';
-  expect((await call('POST', '/api/casey/tools/whoami', { body: {} })).body.ok).toBe(true);
-  flag.value = '';
-  expect((await call('POST', '/api/casey/tools/whoami', { body: {} })).body.ok).toBe(true);
 });
 
 test('the SU chain guards POST too: no token 401, staff 403, SU without elevation 401 (step-up)', async () => {

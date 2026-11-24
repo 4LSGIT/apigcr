@@ -2,7 +2,7 @@
 // stub, with the REAL chats / cards readers running their SQL against canned
 // rows: the gate (the SU casey guard: a staff JWT 403, no token 401, SU without
 // a live elevation refused, a View-as session 403, a machine key refused), the
-// flag not darkening them, the list's filters and validation, one chat with its
+// the list's filters and validation, one chat with its
 // messages (thinking blocks included), its cards (presented, keyed by id) and
 // its flags, 404 for an unknown or malformed id. The SQL itself is proven on
 // the engine by tests/caseyReview.mysql.test.js.
@@ -13,11 +13,6 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'casey-review-test-secret';
-const flags = { v2: null };
-jest.mock('../lib/firmConfig', () => {
-  const actual = jest.requireActual('../lib/firmConfig');
-  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flags.v2 : actual.cfg(k))) };
-});
 
 const { mintElevationToken } = require('../lib/auth.superuser');
 const router = require('../routes/api.casey');
@@ -66,7 +61,7 @@ beforeAll(async () => {
   port = server.address().port;
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); });
-beforeEach(() => { flags.v2 = null; sqlLog.length = 0; });
+beforeEach(() => { sqlLog.length = 0; });
 
 const su = jwt.sign({ sub: 6, username: 'IT', user_auth: 'authorized', roles: ['su'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
 const staff = jwt.sign({ sub: 7, username: 'rena', user_auth: 'authorized', roles: ['admin', 'it'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
@@ -81,7 +76,7 @@ function call(p, { token = su, elevate = true, headers: extra = {} } = {}) {
   });
 }
 
-test('the gate: SU with a live elevation only — staff 403, no token 401, SU without elevation refused, a View-as session 403, a machine key refused; the flag off does not darken them', async () => {
+test('the gate: SU with a live elevation only — staff 403, no token 401, SU without elevation refused, a View-as session 403, a machine key refused', async () => {
   for (const p of ['/api/casey/review?limit=5', '/api/casey/review/23']) {
     expect((await call(p)).status).toBe(200);
     expect((await call(p, { token: staff })).status).toBe(403);
@@ -90,8 +85,6 @@ test('the gate: SU with a live elevation only — staff 403, no token 401, SU wi
     expect((await call(p, { token: viewAs })).status).toBe(403);
     expect([401, 403]).toContain((await call(p, { token: null, headers: { 'x-api-key': 'yci_' + 'A'.repeat(22) } })).status);
   }
-  flags.v2 = '0';
-  expect((await call('/api/casey/review/23')).status).toBe(200);
 });
 
 test('the list: every user\'s chats with the owner, counts, cost and flags; filters user / q / flagged / before / limit; validation', async () => {

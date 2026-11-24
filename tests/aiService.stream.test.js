@@ -90,14 +90,14 @@ function stubFetch(...responses) {
 }
 
 const ANSWER_OPTS = {
-  promptKey: 'assistant_answer', systemAppend: 'SERVER CONTEXT\nCURRENT TIME: x', userInput: 'QUESTION:\nq',
+  promptKey: 'comms_summary', systemAppend: 'SERVER CONTEXT\nCURRENT TIME: x', userInput: 'QUESTION:\nq',
   model: 'claude-opus-5', outputType: 'json', timeout_ms: 60000, max_tokens: 8000,
-  consumerRef: 'assistant_answer:u7', cacheSystemPrefix: true, logContent: false,
+  consumerRef: 'casey_v2_stream:u7', cacheSystemPrefix: true, logContent: false,
 };
 const ATTACH = [{ type: 'document', media_type: 'application/pdf', data_base64: 'JVBERi0xLjQK' }];
 const CASES = [
   ['the answer call site as Casey builds it', ANSWER_OPTS],
-  ['attachments + effort', { promptKey: 'assistant_investigate', systemAppend: 'CTX', userInput: 'q', attachments: ATTACH, outputConfig: { effort: 'low' }, outputType: 'json' }],
+  ['attachments + effort', { promptKey: 'report_build', systemAppend: 'CTX', userInput: 'q', attachments: ATTACH, outputConfig: { effort: 'low' }, outputType: 'json' }],
   ['inline text call', { inlineSystem: 'Sys {{x}}', vars: { x: 'X' }, userInput: 'u', model: 'claude-opus-5' }],
 ];
 

@@ -1,6 +1,6 @@
 # Casey north star
 
-This file states the destination. `ref/ASK_CASEY_ACTIONS_PLAN.md` holds the
+This file states the destination. `ref/archive/ASK_CASEY_ACTIONS_PLAN.md` (Casey v1's roadmap, archived at S6) holds the
 mechanics and the ladder; where a planning decision is about *whether* Casey
 should be able to do something, this file governs. Fred's words, 2026-10-26.
 

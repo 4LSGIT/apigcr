@@ -146,16 +146,12 @@ curated table list the model gets.
 
 ### Reports from Ask Casey
 
-Ask Casey can also draft a report ("make me an exportable list of contacts
-with …"). Casey writes the definition, the server checks it with the same
-validator and runs it on the same read-only connection, and Casey's card shows
-the row count and the first rows before you save. **Save** adds it here,
-labelled as AI-written, and the card's button opens it on this page, where it
-runs and **CSV** exports it. Unlike the **Ask** box above, Casey has read
-records during its lookup, so read a Casey report's SQL and caveats like any
-report you didn't write. Unless you asked for Social Security numbers, a
-Casey report shows only their last four digits. See the Ask Casey chapter,
-*Making a report or an exportable list*.
+Ask Casey can draft a report for you ("make me an exportable list of contacts
+with …"): it reads with its own read-only query tool, then proposes the same
+save the editor makes as a card you approve, and the saved report runs and
+**CSV**-exports here like any other. Casey has read records during its
+lookup, so read a Casey report's SQL and caveats like any report you didn't
+write. See the Ask Casey chapter.
 
 ---
 
