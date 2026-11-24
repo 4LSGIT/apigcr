@@ -338,7 +338,8 @@ describe('readonlyKeys.html — the sensitive box', () => {
   const VOCAB = Object.entries(KEY_SCOPES).map(([name, v]) => ({ name, desc: v.desc }));
   const SENS = { name: 'sql.ro.sensitive', max_ttl_minutes: 1440, default_ttl_minutes: 240 };
 
-  async function boot({ confirmAnswer = true } = {}) {
+  const REVIEW = { name: 'casey.review', max_ttl_minutes: 1440, default_ttl_minutes: 240 };
+  async function boot({ confirmAnswer = true, capped = null } = {}) {
     const html = fs.readFileSync(path.join(ROOT, 'public', 'readonlyKeys.html'), 'utf8');
     const sent = [];
     const confirms = [];
@@ -350,7 +351,7 @@ describe('readonlyKeys.html — the sensitive box', () => {
         w.apiSend = async (url, method, body) => {
           sent.push({ url, method, body });
           if (method === 'GET') {
-            return { ok: true, keys: [], max_ttl_days: 3, scope_vocabulary: VOCAB, default_scopes: ['sql.ro', 'scratch', 'alert'], sensitive_scope: SENS };
+            return { ok: true, keys: [], max_ttl_days: 3, scope_vocabulary: VOCAB, default_scopes: ['sql.ro', 'scratch', 'alert'], sensitive_scope: SENS, ...(capped ? { capped_scopes: capped } : {}) };
           }
           return { ok: true, key: 'ycro_x', label: body.label, scopes: body.scopes, expiresAt: new Date().toISOString(), ttlMinutes: 240 };
         };
@@ -363,6 +364,39 @@ describe('readonlyKeys.html — the sensitive box', () => {
     return { w: dom.window, d, sent, confirms, box, tick };
   }
   const posts = (sent) => sent.filter(s => s.method === 'POST');
+
+  test('S5a: every CAPPED scope sits in the apart row (sql.ro.sensitive and casey.review), none in the main picker; ticking casey.review confirms with its own warning, caps the TTL, leaves sql.ro alone', async () => {
+    const { d, w, confirms } = await boot({ capped: [SENS, REVIEW] });
+    const boxes = [...d.querySelectorAll('#sensitivePicker .sensitive-box')].map((b) => b.value);
+    expect(boxes).toEqual(['sql.ro.sensitive', 'casey.review']);
+    expect(d.querySelector('#scopePicker .scope-box[value="casey.review"]')).toBeNull();
+    expect(d.querySelector('#sensitivePicker').textContent).toMatch(/Capped \(24h\)/);
+    const review = d.querySelector('.sensitive-box[value="casey.review"]');
+    const ro = d.querySelector('#scopePicker .scope-box[value="sql.ro"]');
+    ro.checked = false;
+    review.checked = true; review.dispatchEvent(new w.Event('change'));
+    expect(confirms[confirms.length - 1]).toMatch(/Grant casey\.review\? This key will read EVERY user's Casey chats/);
+    expect(review.checked).toBe(true);
+    expect(ro.checked).toBe(false);                                   // only the sensitive SQL scope drags sql.ro in
+    expect(d.getElementById('newTtl').max).toBe('1440');
+    expect(d.getElementById('ttlHint').textContent).toMatch(/^Capped key: default 240 min/);
+    review.checked = false; review.dispatchEvent(new w.Event('change'));
+    expect(d.getElementById('newTtl').hasAttribute('max')).toBe(false);
+    // two capped boxes ticked: unticking ONE keeps the cap while the other stays ticked (the r2 survivor); unticking both lifts it
+    const sens = d.querySelector('.sensitive-box[value="sql.ro.sensitive"]');
+    sens.checked = true; sens.dispatchEvent(new w.Event('change'));
+    review.checked = true; review.dispatchEvent(new w.Event('change'));
+    expect(d.getElementById('newTtl').max).toBe('1440');
+    review.checked = false; review.dispatchEvent(new w.Event('change'));
+    expect(d.getElementById('newTtl').max).toBe('1440');
+    expect(d.getElementById('ttlHint').textContent).toMatch(/^Capped key/);
+    sens.checked = false; sens.dispatchEvent(new w.Event('change'));
+    expect(d.getElementById('newTtl').hasAttribute('max')).toBe(false);
+    expect(d.getElementById('sensitiveWarn').textContent).toMatch(/casey\.review reads every user's Casey chats/);
+    // without capped_scopes from the server the page falls back to the sensitive scope alone (an older server)
+    const old = await boot();
+    expect([...old.d.querySelectorAll('#sensitivePicker .sensitive-box')].map((b) => b.value)).toEqual(['sql.ro.sensitive']);
+  });
 
   test('renders apart from the other scopes, unticked, with its warning shown', async () => {
     const { d, box } = await boot();
@@ -397,7 +431,7 @@ describe('readonlyKeys.html — the sensitive box', () => {
     expect(ro.checked).toBe(true);
     expect(ttl.getAttribute('max')).toBe('1440');
     expect(ttl.value).toBe('1440');
-    expect(hint.textContent).toBe('Sensitive key: default 240 min (4h). Max 1440 min (24h).');
+    expect(hint.textContent).toBe('Capped key: default 240 min (4h). Max 1440 min (24h).');
     tick(false);
     expect(ttl.hasAttribute('max')).toBe(false);
     expect(hint.innerHTML).toBe(before);

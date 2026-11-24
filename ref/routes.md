@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-23T15:37:10.740Z_  
-_888 routes total — DELETE: 73, GET: 364, PATCH: 61, POST: 345, PUT: 42, _ALL: 3_
+_Generated 2026-11-24T21:21:13.661Z_  
+_891 routes total — DELETE: 74, GET: 365, PATCH: 61, POST: 346, PUT: 42, _ALL: 3_
 
 ## Global middleware chain
 
@@ -942,6 +942,14 @@ _888 routes total — DELETE: 73, GET: 364, PATCH: 61, POST: 345, PUT: 42, _ALL:
 | GET | `/manual/:section/:file` | `jwtOrApiKey` | — |
 | GET | `/manual/search` | `jwtOrApiKey` | — |
 
+## /mcp
+
+| Method | Path | Middlewares | Handler |
+|--------|------|-------------|---------|
+| DELETE | `/mcp` | `readonlyApiKeyAuth` | — |
+| GET | `/mcp` | `readonlyApiKeyAuth` | — |
+| POST | `/mcp` | `readonlyApiKeyAuth` | — |
+
 ## /myip
 
 | Method | Path | Middlewares | Handler |
@@ -1163,4 +1171,4 @@ _888 routes total — DELETE: 73, GET: 364, PATCH: 61, POST: 345, PUT: 42, _ALL:
 
 ---
 
-_888 routes total — DELETE: 73, GET: 364, PATCH: 61, POST: 345, PUT: 42, _ALL: 3_
+_891 routes total — DELETE: 74, GET: 365, PATCH: 61, POST: 346, PUT: 42, _ALL: 3_

@@ -2762,6 +2762,13 @@ edge; position-only loss, accepted.
   than substitute the literal. Under a `headers` map only credential-named
   entries are blanked; a header whose name merely contains "key" (an echoed
   `Idempotency-Key`) is blanked too — accepted.
+- **Casey v2 S5b — the MCP staff identity** (2026-11-23): S5a serves session
+  keys only. The design's §4.9 server for STAFF (api_get / api_write with the
+  client's approval, flag_for_review, sql_read on the report pool) waits for a
+  user-bound credential — the access arc's user-bound key, or OAuth once the
+  MCP auth spec is checked. Also: `tasks.own` as an MCP tool on request; key
+  hygiene from the S5a glance (revoke `gpt`, `temp`, `fil2-session`; scope
+  `long` and `claude long key`).
 - **Casey v2 S4b follow-ups** (2026-11-23): the Casey Chats tile is placed on
   the live Admin page by `scripts/caseyS4bAdminTile.snippet.js` (after Casey
   Notes) — a data step after the deploy; a usage dashboard (per user / per

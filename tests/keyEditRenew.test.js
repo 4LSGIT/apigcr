@@ -85,6 +85,13 @@ describe('rootTtlMinutes — the mint (lax) and the renew (strict)', () => {
       expect(rootTtlMinutes(1440, { sensitive: true, strict })).toBe(1440);
     }
   });
+  test('S5a: the refusal names the capped scope(s) it is about (casey.review is capped like the sensitive scope)', () => {
+    const e = refusal(() => rootTtlMinutes(1441, { sensitive: true, strict: true, names: 'casey.review' }));
+    expect(e.body.error).toMatch(/^a casey\.review key lives at most 1440 minutes/);
+    const both = refusal(() => rootTtlMinutes(2000, { sensitive: true, strict: false, names: 'sql.ro.sensitive + casey.review' }));
+    expect(both.body.error).toMatch(/^a sql\.ro\.sensitive \+ casey\.review key lives at most/);
+    expect(refusal(() => rootTtlMinutes(1441, { sensitive: true, strict: true })).body.error).toMatch(/^a sql\.ro\.sensitive key/);   // the default name
+  });
 });
 
 describe('childExpiresAt', () => {
@@ -200,6 +207,23 @@ describe('session PATCH / renew — refusals before the DB, 409 on revoked', () 
       }
     });
     expect(writes(db)).toEqual([]);
+  });
+
+  test('S5a casey.review is CAPPED: a mint over 24h is a 400 naming it; adding it to a key with more than 24h left is a 400; a renew of a casey.review key over 24h is a 400', async () => {
+    const long = scriptedDb({ id: 7, scopes: ['sql.ro', 'scratch'], expires_at: new Date(Date.now() + 3 * 24 * 3600e3), revoked_at: null, parent_key_id: null });
+    await serve(keysRouter, long, async (base) => {
+      const mint = await hit(base, 'POST', '/api/readonly-keys', { su: true, body: { label: 'review', scopes: ['sql.ro', 'casey.review'], ttlMinutes: 1441 } });
+      expect([mint.status, mint.body.error]).toEqual([400, expect.stringMatching(/^a casey\.review key lives at most 1440 minutes/)]);
+      const add = await hit(base, 'PATCH', '/api/readonly-keys/7', { su: true, body: { scopes: ['sql.ro', 'scratch', 'casey.review'] } });
+      expect([add.status, add.body.error]).toEqual([400, expect.stringMatching(/^casey\.review needs a key with at most 1440 minutes \(24h\) left/)]);
+    });
+    expect(writes(long)).toEqual([]);
+    const review = scriptedDb({ id: 8, scopes: ['sql.ro', 'casey.review'], expires_at: new Date(Date.now() + 3600e3), revoked_at: null, parent_key_id: null });
+    await serve(keysRouter, review, async (base) => {
+      const r = await hit(base, 'POST', '/api/readonly-keys/8/renew', { su: true, body: { ttlMinutes: 1441 } });
+      expect([r.status, r.body.error]).toEqual([400, expect.stringMatching(/^a casey\.review key lives at most 1440 minutes/)]);
+    });
+    expect(writes(review)).toEqual([]);
   });
 
   test('a revoked key → 409 on PATCH and renew, nothing written', async () => {

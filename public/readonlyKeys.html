@@ -169,8 +169,9 @@
   <!-- SEC-3: the sensitive scope sits apart (filled from the server's sensitive_scope). -->
   <div class="scope-row" id="sensitivePicker" style="display:none;"></div>
   <div class="warn-text" id="sensitiveWarn" style="display:none;margin-top:4px;">
-    The sensitive scope lets the key read call transcripts, AI prompts and replies, and every
-    audit log — including other sessions' SQL. Short-lived by rule: at most
+    A capped scope opens what no ordinary key may reach: the sensitive SQL scope reads call
+    transcripts, AI prompts and replies, and every audit log — including other sessions' SQL;
+    casey.review reads every user's Casey chats through the MCP server. Short-lived by rule: at most
     <span id="sensMaxH">24</span>h, default <span id="sensDefH">4</span>h.
   </div>
   <div id="newKeyArea"></div>
@@ -264,57 +265,66 @@
   // (routes/api.readonlyKeys GET: scope_vocabulary + default_scopes, i.e.
   // lib/capabilities KEY_SCOPES), so the page carries no copy of its own.
   let pickerBuilt = false;
-  let sensitive = null;   // { name, max_ttl_minutes, default_ttl_minutes } from the server
+  let sensitive = null;   // { name, max_ttl_minutes, default_ttl_minutes } from the server — the sensitive scope (the first capped one)
+  let capped = [];        // S5a: every CAPPED scope from the server (capped_scopes: sql.ro.sensitive, casey.review) — each sits apart, each caps the TTL
   let vocabCache = null, childScopes = [], ttlCaps = null;   // D2: the edit / renew dialogs' inputs
   // One checkbox, both pickers (the create form and the D2 edit dialog).
   const scopeBox = (v, cls, checked) =>
     `<label title="${esc(v.desc)}"><input type="checkbox" class="${cls}" value="${esc(v.name)}"${
       (checked || []).includes(v.name) ? " checked" : ""}> ${esc(v.name)}</label>`;
-  function buildPicker(vocab, defaults, sens) {
+  function buildPicker(vocab, defaults, sens, cappedList) {
     if (pickerBuilt || !Array.isArray(vocab)) return;
     pickerBuilt = true;
     vocabCache = vocab;
     sensitive = sens && sens.name ? sens : null;
+    capped = Array.isArray(cappedList) && cappedList.length ? cappedList : (sensitive ? [sensitive] : []);
+    const cappedNames = capped.map(c => c.name);
     const box = (v, cls) => scopeBox(v, cls, defaults);
     const row = document.getElementById("scopePicker");
-    row.insertAdjacentHTML("beforeend", vocab.filter(v => !sensitive || v.name !== sensitive.name)
+    row.insertAdjacentHTML("beforeend", vocab.filter(v => !cappedNames.includes(v.name))
       .map(v => box(v, "scope-box")).join(""));
-    // The sensitive scope: its own row, its own warning, a confirm to tick it.
-    const sv = sensitive && vocab.find(v => v.name === sensitive.name);
-    if (sv) {
+    // The capped scopes (sensitive SQL; S5a casey.review): their own row, one warning, a confirm to tick one; each caps the TTL.
+    const cv = vocab.filter(v => cappedNames.includes(v.name));
+    if (cv.length) {
       const srow = document.getElementById("sensitivePicker");
-      srow.innerHTML = `<span class="muted">Sensitive:</span>` + box(sv, "scope-box sensitive-box");
+      srow.innerHTML = `<span class="muted">Capped (24h):</span>` + cv.map(v => box(v, "scope-box sensitive-box")).join("");
       srow.style.display = "";   // .scope-row's flex
       document.getElementById("sensitiveWarn").style.display = "";
-      document.getElementById("sensMaxH").textContent = sensitive.max_ttl_minutes / 60;
-      document.getElementById("sensDefH").textContent = sensitive.default_ttl_minutes / 60;
-      srow.querySelector(".sensitive-box").addEventListener("change", onSensitiveChange);
+      const cap = capped[0];
+      document.getElementById("sensMaxH").textContent = cap.max_ttl_minutes / 60;
+      document.getElementById("sensDefH").textContent = cap.default_ttl_minutes / 60;
+      srow.querySelectorAll(".sensitive-box").forEach(b => b.addEventListener("change", onSensitiveChange));
     }
   }
+  const cappedCap = () => capped[0] || sensitive;   // every capped scope shares the one cap
   const ttlHintHtml = () => document.getElementById("ttlHint").dataset.orig;
   function sensitivePicked() {
-    const b = document.querySelector(".sensitive-box");
-    return !!(b && b.checked);
+    return [...document.querySelectorAll(".sensitive-box")].some(b => b.checked);   // any capped scope ticked
   }
   // Ticking the sensitive scope: confirm, make sure sql.ro rides with it, and
   // cap the TTL field (max attribute, an over-cap value pulled down, the hint
   // rewritten). Unticking restores the ordinary field.
+  const CAPPED_WARNING = {
+    "sql.ro.sensitive": "This key will read call transcripts, AI prompts/replies and the audit logs.",
+    "casey.review": "This key will read EVERY user's Casey chats — their questions, Casey's answers, the tool calls — through the MCP server, without the superuser step-up.",
+  };
   function onSensitiveChange(e) {
     const ttlEl = document.getElementById("newTtl");
     const hint  = document.getElementById("ttlHint");
+    const cap   = cappedCap();
     if (hint.dataset.orig === undefined) hint.dataset.orig = hint.innerHTML;
     if (e.target.checked) {
-      if (!confirm(`Grant ${sensitive.name}? This key will read call transcripts, AI prompts/replies and the audit logs. It lives at most ${sensitive.max_ttl_minutes / 60}h.`)) {
+      const name = e.target.value;
+      if (!confirm(`Grant ${name}? ${CAPPED_WARNING[name] || "This scope opens what no ordinary key may reach."} It lives at most ${cap.max_ttl_minutes / 60}h.`)) {
         e.target.checked = false;
         return;
       }
-      const ro = document.querySelector('.scope-box[value="sql.ro"]');
-      if (ro) ro.checked = true;
-      ttlEl.max = String(sensitive.max_ttl_minutes);
-      if (ttlEl.value && parseInt(ttlEl.value, 10) > sensitive.max_ttl_minutes) ttlEl.value = String(sensitive.max_ttl_minutes);
-      hint.textContent = `Sensitive key: default ${sensitive.default_ttl_minutes} min (${sensitive.default_ttl_minutes / 60}h). Max ${sensitive.max_ttl_minutes} min (${sensitive.max_ttl_minutes / 60}h).`;
+      if (name === "sql.ro.sensitive") { const ro = document.querySelector('.scope-box[value="sql.ro"]'); if (ro) ro.checked = true; }
+      ttlEl.max = String(cap.max_ttl_minutes);
+      if (ttlEl.value && parseInt(ttlEl.value, 10) > cap.max_ttl_minutes) ttlEl.value = String(cap.max_ttl_minutes);
+      hint.textContent = `Capped key: default ${cap.default_ttl_minutes} min (${cap.default_ttl_minutes / 60}h). Max ${cap.max_ttl_minutes} min (${cap.max_ttl_minutes / 60}h).`;
       hint.classList.add("warn-text");
-    } else {
+    } else if (!sensitivePicked()) {
       ttlEl.removeAttribute("max");
       hint.innerHTML = ttlHintHtml();
       hint.classList.remove("warn-text");
@@ -351,7 +361,7 @@
       const activeOnly = document.getElementById("activeOnly").checked ? 1 : 0;
       const data = await P.apiSend(`/api/readonly-keys?activeOnly=${activeOnly}`, "GET");
 
-      buildPicker(data.scope_vocabulary, data.default_scopes, data.sensitive_scope);
+      buildPicker(data.scope_vocabulary, data.default_scopes, data.sensitive_scope, data.capped_scopes);
       if (Array.isArray(data.child_scopes)) childScopes = data.child_scopes;
       if (data.ttl) ttlCaps = data.ttl;
 
@@ -412,8 +422,8 @@
     if (!label) { alert("Label required"); return; }
     const scopes = pickedScopes();
     if (pickerBuilt && !scopes.length) { alert("Pick at least one scope — a key with none can do nothing."); return; }
-    if (sensitivePicked() && ttl && parseInt(ttl, 10) > sensitive.max_ttl_minutes) {
-      alert(`A ${sensitive.name} key lives at most ${sensitive.max_ttl_minutes} minutes.`); return;
+    if (sensitivePicked() && ttl && parseInt(ttl, 10) > cappedCap().max_ttl_minutes) {
+      alert(`A key with a capped scope (${[...document.querySelectorAll(".sensitive-box")].filter(b => b.checked).map(b => b.value).join(", ")}) lives at most ${cappedCap().max_ttl_minutes} minutes.`); return;
     }
 
     try {
@@ -506,8 +516,8 @@
     if (isChild(row)) {
       return `A child key: at most ${ttlCaps ? ttlCaps.child_max_minutes : 1440} minutes, and never past its parent (#${row.parent_key_id}, expires ${fmtDate(row.parent_expires_at)}). Blank = the longer that allows.`;
     }
-    if (sensitive && Array.isArray(row.scopes) && row.scopes.includes(sensitive.name)) {
-      return `A sensitive key: default ${sensitive.default_ttl_minutes} minutes, at most ${sensitive.max_ttl_minutes}.`;
+    if (cappedCap() && Array.isArray(row.scopes) && row.scopes.some(s => capped.map(c => c.name).includes(s))) {
+      return `A capped key (${row.scopes.filter(s => capped.map(c => c.name).includes(s)).join(", ")}): default ${cappedCap().default_ttl_minutes} minutes, at most ${cappedCap().max_ttl_minutes}.`;
     }
     return ttlCaps ? `Default ${ttlCaps.default_minutes} minutes, at most ${ttlCaps.max_minutes}.` : "";
   }
@@ -587,7 +597,7 @@
       <div class="rr-reason">“${esc(r.reason)}”</div>
       <div class="rr-meta">
         ${expired ? "Expired" : "Expires"} ${fmtDate(r.key_expires_at)} · last used ${fmtDate(r.key_last_used_at)}<br>
-        Scopes: ${scopesCell(r.key_scopes)}${r.caps.sensitive ? ' <span class="warn-text">(sensitive — 24h max)</span>' : ""}<br>
+        Scopes: ${scopesCell(r.key_scopes)}${r.caps.sensitive ? ' <span class="warn-text">(capped — 24h max)</span>' : ""}<br>
         Asked ${fmtDate(r.requested_at)} from ${esc(r.request_ip || "unknown")} for
         ${r.requested_ttl_min == null ? "the default" : esc(fmtMin(r.requested_ttl_min))}
         · max ${esc(fmtMin(r.caps.max_minutes))} · emailed ${esc(r.notify_username || r.notify_user)}

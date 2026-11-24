@@ -99,6 +99,12 @@ const DEFAULT_TTL_MIN = 1440;  // 1 day
 const SENSITIVE_SCOPE           = "sql.ro.sensitive";
 const SENSITIVE_MAX_TTL_MIN     = 1440;  // 24h — not env-tunable
 const SENSITIVE_DEFAULT_TTL_MIN = 240;   // 4h
+// CAPPED scopes (Casey v2 S5a): every scope that opens what no ordinary key may hold shares the
+// sensitive scope's life rules — ≤ 24h at mint and renew, added to a key only with ≤ 24h left,
+// never a child's. sql.ro.sensitive is the first; casey.review (the MCP review tools) the second.
+const CAPPED_SCOPES = Object.freeze([SENSITIVE_SCOPE, "casey.review"]);
+const isCapped = (scopes) => Array.isArray(scopes) && scopes.some((s) => CAPPED_SCOPES.includes(s));
+const cappedNames = (scopes) => (scopesFromColumn(scopes) || []).filter((s) => CAPPED_SCOPES.includes(s)).join(" + ");   // a column (JSON string, or the array mysql2 parses) or an array
 
 const CHILD_MAX_TTL_MIN   = 1440;  // 24h — not env-tunable
 const CHILD_MINTS_PER_HOUR = 10;   // per parent, rolling hour, DB-counted
@@ -150,13 +156,14 @@ function sessionScopes(list) {
 }
 
 /**
- * A ROOT session key's lifetime in minutes. Sensitive: ≤ 24h (default 4h), over
- * = 400. Ordinary: default 1 day; over MAX_TTL_MINUTES the MINT clamps (its
- * behaviour since before D2, kept) while a RENEW (strict) refuses — the D2
- * ruling is "over a cap → 400, never a clamp". Strict also refuses junk, which
- * the mint reads as "not given".
+ * A ROOT session key's lifetime in minutes. A CAPPED key (sql.ro.sensitive or
+ * casey.review): ≤ 24h (default 4h), over = 400. Ordinary: default 1 day; over
+ * MAX_TTL_MINUTES the MINT clamps (its behaviour since before D2, kept) while a
+ * RENEW (strict) refuses — the D2 ruling is "over a cap → 400, never a clamp".
+ * Strict also refuses junk, which the mint reads as "not given". `sensitive`
+ * is the historical name of the flag: it means "holds a capped scope".
  */
-function rootTtlMinutes(ttlMinutes, { sensitive, strict }) {
+function rootTtlMinutes(ttlMinutes, { sensitive, strict, names = SENSITIVE_SCOPE }) {
   let given = false, requested;
   if (strict) {
     if (ttlMinutes !== undefined && ttlMinutes !== null) {
@@ -173,7 +180,7 @@ function rootTtlMinutes(ttlMinutes, { sensitive, strict }) {
   if (sensitive) {
     if (given && requested > SENSITIVE_MAX_TTL_MIN) {
       throw new Refusal(400, {
-        error: `a ${SENSITIVE_SCOPE} key lives at most ${SENSITIVE_MAX_TTL_MIN} minutes (24h); asked for ${requested}`,
+        error: `a ${names} key lives at most ${SENSITIVE_MAX_TTL_MIN} minutes (24h); asked for ${requested}`,
         maxTtlMinutes: SENSITIVE_MAX_TTL_MIN,
       });
     }
@@ -438,7 +445,7 @@ router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (re
   let scopes, ttl;
   try {
     scopes = scopesIn === undefined ? [...DEFAULT_SCOPES] : sessionScopes(scopesIn);
-    ttl = rootTtlMinutes(ttlMinutes, { sensitive: scopes.includes(SENSITIVE_SCOPE), strict: false });
+    ttl = rootTtlMinutes(ttlMinutes, { sensitive: isCapped(scopes), strict: false, names: cappedNames(scopes) || SENSITIVE_SCOPE });
   } catch (err) {
     if (err instanceof Refusal) return send(res, err);
     throw err;
@@ -530,6 +537,8 @@ router.get("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (req
       // SEC-3: the sensitive scope and its mint cap, so the page renders the
       // box apart and caps the TTL field from the server's numbers.
       sensitive_scope: { name: SENSITIVE_SCOPE, max_ttl_minutes: SENSITIVE_MAX_TTL_MIN, default_ttl_minutes: SENSITIVE_DEFAULT_TTL_MIN },
+      // S5a: every capped scope (the sensitive one included) — the page renders each apart with the same TTL cap.
+      capped_scopes: CAPPED_SCOPES.map((name) => ({ name, max_ttl_minutes: SENSITIVE_MAX_TTL_MIN, default_ttl_minutes: SENSITIVE_DEFAULT_TTL_MIN })),
       // D2: the edit dialog's child picker and the renew dialog's caps.
       child_scopes: CHILD_SCOPES,
       ttl: { max_minutes: MAX_TTL_MINUTES, default_minutes: DEFAULT_TTL_MIN, child_max_minutes: CHILD_MAX_TTL_MIN },
@@ -631,12 +640,12 @@ router.patch("/api/readonly-keys/:id", ...superuserOnlyFor("readonlyKeys"), asyn
     const before = scopesFromColumn(row.scopes);
     if (row.parent_key_id != null) childScopesWithin(scopes, CHILD_SCOPES);
 
-    const hadSensitive = Array.isArray(before) && before.includes(SENSITIVE_SCOPE);
-    if (scopes.includes(SENSITIVE_SCOPE) && !hadSensitive) {
+    const added = scopes.filter((s) => CAPPED_SCOPES.includes(s) && !(Array.isArray(before) && before.includes(s)));   // a capped scope NEWLY added (S5a: sensitive or casey.review)
+    if (added.length) {
       const leftMin = Math.ceil((new Date(row.expires_at).getTime() - Date.now()) / 60_000);
       if (leftMin > SENSITIVE_MAX_TTL_MIN) {
         throw new Refusal(400, {
-          error: `${SENSITIVE_SCOPE} needs a key with at most ${SENSITIVE_MAX_TTL_MIN} minutes (24h) left; this one has ${leftMin} — renew it shorter first: POST /api/readonly-keys/${id}/renew { ttlMinutes ≤ ${SENSITIVE_MAX_TTL_MIN} }`,
+          error: `${added.join(" + ")} needs a key with at most ${SENSITIVE_MAX_TTL_MIN} minutes (24h) left; this one has ${leftMin} — renew it shorter first: POST /api/readonly-keys/${id}/renew { ttlMinutes ≤ ${SENSITIVE_MAX_TTL_MIN} }`,
           renewRoute: `/api/readonly-keys/${id}/renew`,
           maxTtlMinutes: SENSITIVE_MAX_TTL_MIN,
         });
@@ -683,7 +692,7 @@ async function renewKey(db, id, ttlMinutes) {
     }
     expiresAt = childExpiresAt(ttlMinutes, new Date(row.parent_expires_at).getTime());
   } else {
-    ttl = rootTtlMinutes(ttlMinutes, { sensitive: isSensitiveColumn(row.scopes), strict: true });
+    ttl = rootTtlMinutes(ttlMinutes, { sensitive: isSensitiveColumn(row.scopes), strict: true, names: cappedNames(scopesFromColumn(row.scopes)) || SENSITIVE_SCOPE });
     expiresAt = new Date(Math.floor((Date.now() + ttl * 60_000) / 1000) * 1000);
   }
   const [r] = await db.query(
@@ -692,10 +701,9 @@ async function renewKey(db, id, ttlMinutes) {
   return { id, before: new Date(row.expires_at), expiresAt, ttlMinutes: ttl };
 }
 
-/** Does a stored scopes column hold the sensitive scope? (NULL = legacy = no.) */
+/** Does a stored scopes column hold a CAPPED scope (sql.ro.sensitive or casey.review)? (NULL = legacy = no.) */
 function isSensitiveColumn(scopesColumn) {
-  const own = scopesFromColumn(scopesColumn);
-  return Array.isArray(own) && own.includes(SENSITIVE_SCOPE);
+  return isCapped(scopesFromColumn(scopesColumn));
 }
 
 /** A ROOT key's renew caps from its stored scopes: { default_minutes, max_minutes, sensitive }. */
@@ -762,5 +770,6 @@ module.exports._rules = { Refusal, sessionScopes, rootTtlMinutes, childExpiresAt
 // The one renew + the caps it applies — routes/api.keyRenewalRequests.js (key-renew-req).
 module.exports.renewKey = renewKey;
 module.exports.rootTtlCaps = rootTtlCaps;
+module.exports.cappedNames = cappedNames;   // S5a: the capped scope(s) a refusal should name
 module.exports.isSensitiveColumn = isSensitiveColumn;
 module.exports.Refusal = Refusal;

@@ -27,6 +27,24 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S5a — the MCP server, for session keys (11-23):** `POST /mcp`
+  (`routes/mcp.js`, Streamable HTTP, STATELESS, `@modelcontextprotocol/sdk`
+  1.32.2) authenticates a `ycro_` session key (`lib/auth.readonly`, class
+  `key`) and offers tools BY SCOPE (`services/mcp/tools.js`): whoami /
+  lookup_routes / read_source / search_docs to any key; readonly_sql,
+  settings_read, scratch_get on `sql.ro`; scratch_put / delete on `scratch`;
+  alert_it on `alert`; casey_review_list / _chat on the NEW `casey.review`
+  scope (explicit, 24 h-capped like `sql.ro.sensitive` — the keys routes now
+  share one CAPPED rule). Tools with a route call it over loopback with the
+  key's header (one code path, the route's logs and refusals); the review
+  tools audit every read in `readonly_query_log` (the route's columns, fail
+  closed — no row, no answer) and page a transcript. Record / file content
+  comes behind an UNTRUSTED DATA line; results are cut at 60 KB of bytes; one
+  JSON-RPC message per request. Never a JWT, never a machine key, never the
+  acting tools (api_get / api_write — S5b). Dev sessions: `claude mcp add
+  --transport http yisracase https://app.4lsg.com/mcp --header
+  "X-Readonly-Api-Key: ycro_…"` — local or user scope, never `--scope project`.
+  Design §9 S5a; manual 08-Admin-Tools/02.
 - **Casey v2 S4b — flag for review; a superuser reads any chat (11-23):**
   `issue_reports.kind` gains `casey` (a flagged Casey answer; `context.casey`
   `{chat_id, seq, model, prompt_version, by}`; a blank note allowed, the chat

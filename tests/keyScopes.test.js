@@ -59,7 +59,7 @@ const flush = () => new Promise(r => setImmediate(r));
 describe('KEY_SCOPES vocabulary', () => {
   test('the surface family is exactly the reviewed snapshot', () => {
     expect(Object.keys(KEY_SCOPES)).toEqual([
-      'sql.ro', 'sql.ro.sensitive', 'scratch', 'alert', 'keys.mint', 'tasks.own', 'temp.clio', 'temp.dropbox', 'temp.zohosign',
+      'sql.ro', 'sql.ro.sensitive', 'scratch', 'alert', 'keys.mint', 'tasks.own', 'casey.review', 'temp.clio', 'temp.dropbox', 'temp.zohosign',   // casey.review: Casey v2 S5a (the MCP review tools; explicit, 24h-capped)
     ]);
     expect(Object.isFrozen(KEY_SCOPES)).toBe(true);
     for (const v of Object.values(KEY_SCOPES)) expect(v.desc).toMatch(/\S/);
@@ -106,7 +106,7 @@ describe('keyAllows', () => {
     }
     // SEC-3 + D1: the explicit scopes — a legacy key never gained the sensitive tables,
     // nor the power to mint child keys
-    expect(Object.keys(KEY_SCOPES).filter(s => KEY_SCOPES[s].explicit)).toEqual(['sql.ro.sensitive', 'keys.mint', 'tasks.own']);
+    expect(Object.keys(KEY_SCOPES).filter(s => KEY_SCOPES[s].explicit)).toEqual(['sql.ro.sensitive', 'keys.mint', 'tasks.own', 'casey.review']);   // S5a: casey.review opens another user's chats — never the legacy surface
     expect(keyAllows({ scopes: ['sql.ro', 'sql.ro.sensitive'] }, 'sql.ro.sensitive')).toBe(true);
   });
 
@@ -157,7 +157,11 @@ const SURFACE_BY_FILE = {
 
 // Reaches no surface, so no scope can gate it. Nothing else joins this list
 // without the same argument (tests/keyWhoami.test.js locks what it returns).
-const UNSCOPED_MOUNTS = ['get /api/readonly/whoami'];
+// S5a: the MCP server (routes/mcp.js) is one mount for MANY surfaces — the key's
+// scopes are judged PER TOOL inside (services/mcp/tools.js, tests/mcpServer.test.js:
+// a tool outside the key's scopes is a refusal, and tools/list hides it), so the
+// mount itself carries no single surface. GET / DELETE answer 405 after auth.
+const UNSCOPED_MOUNTS = ['get /api/readonly/whoami', 'post /mcp', 'get /mcp', 'delete /mcp'];
 const at = (m) => `${m.method} ${m.path}`;
 
 /** Every route layer in routes/ whose first handler is readonlyApiKeyAuth. */

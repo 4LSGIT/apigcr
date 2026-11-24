@@ -858,6 +858,7 @@ routes/logs.js
 routes/mailboxIngest.js
 routes/manage.js
 routes/manuals.js
+routes/mcp.js
 routes/pageLanding.js
 routes/pages.js
 routes/portal.auth.js
@@ -1251,6 +1252,7 @@ services/mailbox/mailboxIngestService.js
 services/mailbox/mailboxScheduledSendService.js
 services/mailbox/mailboxSendService.js
 services/mailboxService.js
+services/mcp/tools.js
 services/oauthService.js
 services/optoutService.js
 services/pabblyService.js
@@ -1964,6 +1966,8 @@ tests/manualReadmeCoverage.test.js
 tests/manualSearch.test.js
 tests/manualsRoute.test.js
 tests/mascotSkins.test.js
+tests/mcpAudit.mysql.test.js
+tests/mcpServer.test.js
 tests/mobileSurveyRetry.test.js
 tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js

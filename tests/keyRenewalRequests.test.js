@@ -230,6 +230,17 @@ describe('POST /api/readonly/renewal-request refusals', () => {
     row.current = keyRow({ scopes: '["sql.ro","sql.ro.sensitive"]' });
     r = await ask({ reason: 'a perfectly fine reason', ttlMinutes: 1441 });
     expect(r.body).toMatchObject({ maxTtlMinutes: 1440, defaultTtlMinutes: 240 });
+    expect(r.body.error).toMatch(/a sql\.ro\.sensitive key lives at most 1440 minutes/);
+    // S5a: the refusal names the key's OWN capped scope (the column as a JSON string here, the parsed array in production)
+    for (const scopes of ['["sql.ro","casey.review"]', ['sql.ro', 'casey.review']]) {
+      row.current = keyRow({ scopes });
+      r = await ask({ reason: 'a perfectly fine reason', ttlMinutes: 1441 });
+      expect([r.status, r.body.maxTtlMinutes]).toEqual([400, 1440]);
+      expect(r.body.error).toMatch(/a casey\.review key lives at most 1440 minutes/);
+    }
+    row.current = keyRow({ scopes: '["sql.ro.sensitive","casey.review"]' });
+    r = await ask({ reason: 'a perfectly fine reason', ttlMinutes: 1441 });
+    expect(r.body.error).toMatch(/a sql\.ro\.sensitive \+ casey\.review key lives at most 1440 minutes/);
     expect(writes).toEqual([]);
   });
 });

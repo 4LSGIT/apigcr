@@ -20,6 +20,7 @@ A key reaches only the surfaces in its **scopes**:
 |---|---|
 | `sql.ro` | `POST /api/readonly/sql` — read-only SQL (below) |
 | `sql.ro.sensitive` | the same SQL may also read the **sensitive tables** (below) — short-lived keys only |
+| `casey.review` | the MCP server's two review tools: every user's Casey v2 chats and one chat's full record — what Admin → Casey Chats shows a superuser, without the step-up — short-lived keys only (Casey v2 S5a) |
 | `scratch` | `PUT` / `DELETE /api/scratch/…` — cross-session notes |
 | `alert` | `POST /api/alert/it` — page IT |
 | `keys.mint` | mint, list and revoke its own **child keys** (below) — never ticked by default |
@@ -66,8 +67,9 @@ string, so a size query that merely *lists* `ai_calls` is refused too.
    days**. Keys are meant to be short-lived; re-issue rather than making them
    long.
 3. Tick its **scopes** — at least one; the default three are pre-ticked.
-   The **Sensitive** box sits on its own line: ticking it asks you to
-   confirm, ticks `sql.ro` with it, and caps the TTL — a sensitive key lives
+   The **Capped (24h)** row holds the scopes that live at most a day — `sql.ro.sensitive` and `casey.review` — each with its own warning: ticking one asks you to
+   confirm and caps the TTL (`sql.ro.sensitive` also ticks `sql.ro`, which its
+   SQL needs; `casey.review` leaves the other scopes alone) — a capped key lives
    **at most 24 hours (default 4)**, and a longer TTL is refused rather than
    shortened. Grant it for the one diagnostic session that needs it.
 4. Create. **The key's plaintext is shown exactly once, right now.** Copy it
@@ -289,3 +291,15 @@ This is the human-facing side of the same read-only access path the AI session
 tools use; for write access to the live DB, see the
 [DB Console](01-db-console.md) (and prefer this read-only path whenever a read
 is all you need).
+
+## The MCP server (Casey v2 S5a)
+
+A session key is also an MCP identity. Claude Code connects with
+
+```
+claude mcp add --transport http yisracase https://app.4lsg.com/mcp --header "X-Readonly-Api-Key: ycro_…"
+```
+
+and sees exactly the tools its scopes allow: `whoami`, `lookup_routes`, `read_source` and `search_docs` for every key; `readonly_sql`, `settings_read` and `scratch_get` with `sql.ro`; `scratch_put` / `scratch_delete` with `scratch`; `alert_it` with `alert`; `casey_review_list` / `casey_review_chat` with `casey.review`. A tool that has a route calls that route with the key's own header, so the same limits, logs and refusals apply as from curl. Two things ARE new to a key here: the three read tools (`lookup_routes`, `read_source`, `search_docs` were Casey's own staff tools over the route catalog, the deployed source tree and the manual — code and docs, no record data), and the review tools behind the new scope, which write a `readonly_query_log` row for every read (the chat named) before anything is handed over — no audit row, no answer. A review transcript is paged (40 rows a call; the answer says `next_from_seq`). Every result carrying record, file or document content starts with an UNTRUSTED DATA line, as Casey's own tool results do. The server is stateless and keeps no session; one JSON-RPC message per request (a batch is refused).
+
+Add the server at the default (`local`) or `user` scope — both private, never committed — and never `claude mcp add --scope project`, which writes the key into the repo's `.mcp.json`.

@@ -219,7 +219,7 @@ router.post("/api/readonly/renewal-request", readonlyApiKeyAuthAllowExpired, asy
     let requestedTtl = null;
     if (body.ttlMinutes !== undefined && body.ttlMinutes !== null) {
       try {
-        requestedTtl = keys._rules.rootTtlMinutes(body.ttlMinutes, { sensitive: caps.sensitive, strict: true });
+        requestedTtl = keys._rules.rootTtlMinutes(body.ttlMinutes, { sensitive: caps.sensitive, strict: true, names: keys.cappedNames(key.scopes) || 'sql.ro.sensitive' });   // the refusal names the key's capped scope(s) — casey.review too — not always the SQL one (S5a review)
       } catch (err) {
         if (err instanceof keys.Refusal) {
           return res.status(err.status).json({ ...err.body, defaultTtlMinutes: caps.default_minutes, maxTtlMinutes: caps.max_minutes });
