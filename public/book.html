@@ -347,6 +347,10 @@
   var slug = location.pathname.split('/').filter(Boolean).pop() || '';
   var qs = new URLSearchParams(location.search);
   var token = qs.get('c') || '';
+  // ?src=<tag> — which website this embed sits on. Forwarded as body.src on the
+  // booking POST and nothing else; the server validates it and composes
+  // appt_source = "<view-tag>:<tag>" (invalid → ignored, the booking proceeds).
+  var srcTag = qs.get('src') || '';
 
   var REDIRECT_BEAT_MS = 1500;      // full page: how long the thank-you shows before redirect_url
   var FIRM_TZ = 'America/New_York'; // matches the server's FIRM_TZ; label says Eastern
@@ -469,6 +473,65 @@
       updateBookBtn();
     }
     try { window.scrollTo(0, 0); } catch (e) {}
+    scheduleResize(true);
+  }
+
+  // ── Embedded: tell the host page our content height ─────────
+  // Framed, the widget posts { type:'yc-booking', event:'resize', slug,
+  // height, step } to its host (targetOrigin '*', no personal data) so the
+  // host's iframe can follow the content instead of scrolling inside a fixed
+  // 700px box: on boot, on every step change, and whenever the content wrapper
+  // changes size (a ResizeObserver, coalesced on one animation frame, changes
+  // under 2px skipped). `height` is the CONTENT's height — the wrapper's bottom
+  // edge in document coordinates — never documentElement.scrollHeight, which
+  // inside an iframe is at least the frame's own height and could never let
+  // the frame shrink. `step` is 1 | 2 | 3 | 'done' (thank-you shown); the
+  // host scrolls the frame back into view when it changes. The host side is
+  // the Booking Manager's embed code (embedListenerScript). Top-level: nothing.
+  var framed = false;
+  try { framed = window.parent !== window; } catch (e) { framed = true; }
+  var lastPostedHeight = -1;
+  var resizeRaf = null;
+  var resizeForce = false;
+
+  function contentHeight() {
+    var wrap = document.querySelector('.wrap');
+    if (!wrap) return 0;
+    var r = wrap.getBoundingClientRect();
+    return Math.ceil(r.bottom + (window.scrollY || window.pageYOffset || 0));
+  }
+  function currentStep() {
+    var ty = E('thankyou');
+    return ty && !ty.classList.contains('hidden') ? 'done' : step;
+  }
+  function postResize(force) {
+    if (!framed) return;
+    var h = contentHeight();
+    if (!(h > 0)) return;
+    if (!force && Math.abs(h - lastPostedHeight) < 2) return;
+    lastPostedHeight = h;
+    try {
+      window.parent.postMessage({ type: 'yc-booking', event: 'resize', slug: slug, height: h, step: currentStep() }, '*');
+    } catch (e) {}
+  }
+  function scheduleResize(force) {
+    if (!framed) return;
+    resizeForce = resizeForce || !!force;
+    if (resizeRaf) return;
+    resizeRaf = requestAnimationFrame(function () {
+      resizeRaf = null;
+      var f = resizeForce;
+      resizeForce = false;
+      postResize(f);
+    });
+  }
+  function wireResize() {
+    if (!framed) return;
+    var wrap = document.querySelector('.wrap');
+    if (wrap && typeof ResizeObserver === 'function') {
+      new ResizeObserver(function () { scheduleResize(false); }).observe(wrap);
+    }
+    window.addEventListener('load', function () { scheduleResize(false); });
   }
 
   function providerLabel() {
@@ -549,6 +612,7 @@
   function showUnavailable() {
     hide('state-loading');
     show('state-unavailable');
+    scheduleResize(true);
     // No view config on a dead/inactive slug (its /config 404s), so there's no
     // branding to render from. Fetch the token-less firm config for the logo +
     // a general fallback CTA so the dead end is branded, not a bare message.
@@ -626,6 +690,7 @@
     buildDateStrip();
     wireNav();
     wireDetails();
+    wireResize();
     E('book-btn').addEventListener('click', submit);
     show('main');
     goStep(1);
@@ -837,6 +902,7 @@
       payload.provider = Number(E('provider').value);
     }
     if (useToken) payload.c = token;
+    if (srcTag) payload.src = srcTag;
     if (!tokenMode) {
       payload.first = E('f-first').value.trim();
       payload.last  = E('f-last').value.trim();
@@ -904,6 +970,7 @@
       hide('main');
       show('thankyou');
       try { window.scrollTo(0, 0); } catch (e) {}
+      scheduleResize(true);
       afterBooked(r.body.redirect_url);
       return;
     }

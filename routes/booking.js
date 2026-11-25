@@ -127,6 +127,33 @@ const { generateToken, PUBLIC_TOKEN_RE } = require('../lib/token');
 // ─────────────────────────────────────────────────────────────
 
 const SLUG_RE  = /^[a-zA-Z0-9_-]{1,100}$/;
+
+// ?src=<tag> — per-embed attribution (2026-11-25). One view (bk-consult) sits
+// on several websites; the widget forwards the tag from its own query string
+// as body.src, and the booking lands as appt_source = "<base>:<tag>", base =
+// the view's source_tag, else its slug. The tag is trimmed and lower-cased,
+// then must match SRC_TAG_RE; anything else is IGNORED and the booking goes
+// through untagged — attribution never fails a booking, never 400s. It touches
+// appt_source alone (and the view hook's `source`, which reads the row):
+// never the redirect, the branding or the thank-you — a tag is not a redirect.
+const SRC_TAG_RE = /^[a-z0-9][a-z0-9_-]{0,29}$/;
+// appts.appt_source is varchar(60) under the relaxed sql_mode (silent
+// truncation); SLUG_RE allows 100, so the BASE is cut to keep the whole tag.
+const APPT_SOURCE_MAX = 60;
+
+function normalizeSrcTag(v) {
+  if (typeof v !== 'string') return null;
+  const t = v.trim().toLowerCase();
+  return SRC_TAG_RE.test(t) ? t : null;
+}
+
+/** The appt_source for a booking on `view`: untagged → exactly the view's
+ *  source_tag || null (today's value); tagged → "<base>:<tag>" within 60. */
+function composeApptSource(view, tag) {
+  if (!tag) return view.source_tag || null;
+  const base = String(view.source_tag || view.slug || '');
+  return base.slice(0, APPT_SOURCE_MAX - 1 - tag.length) + ':' + tag;
+}
 const DATE_RE  = /^\d{4}-\d{2}-\d{2}$/;
 const START_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
 // contact_token format gate. Shared class (lib/token): accepts legacy 32-hex
@@ -752,7 +779,7 @@ async function anyAutoCandidates(db, view, dateStr, start, perProvider) {
  * Returns { apptId } on success, null when the slot is no longer available,
  * and throws on infrastructure errors.
  */
-async function bookUnderLock(db, view, providerId, dateStr, start, contactId, note) {
+async function bookUnderLock(db, view, providerId, dateStr, start, contactId, note, apptSource) {
   const lockKey = `book:${providerId}`;
   const conn = await db.getConnection();
   let locked = false;
@@ -798,7 +825,7 @@ async function bookUnderLock(db, view, providerId, dateStr, start, contactId, no
       appt_date:     `${start}:00`,
       appt_with:     providerId,
       note:          note,
-      appt_source:   view.source_tag || null,
+      appt_source:   apptSource,      // composeApptSource: the view's tag, ":<src>" appended when the embed sent one
       appt_view_id:  view.id,         // slice 9b: branding + lifecycle hooks
       confirm_sms:   false,           // confirmations are template-driven below
       confirm_email: false,
@@ -948,6 +975,9 @@ router.post('/api/book/:slug', async (req, res) => {
     const note = view.collect_note && typeof body.note === 'string'
       ? body.note.trim().slice(0, 500)
       : '';
+    // Attribution tag (?src= on the embed, forwarded by the widget). Invalid
+    // or absent → the view's own source_tag, exactly as before.
+    const apptSource = composeApptSource(view, normalizeSrcTag(body.src));
 
     // ── 5 + 6. Provider resolution + lock + re-verify + create ──
     let candidates;
@@ -982,7 +1012,7 @@ router.post('/api/book/:slug', async (req, res) => {
     let booked = null;
     let providerId = null;
     for (const pid of candidates) {
-      booked = await bookUnderLock(req.db, view, pid, dateStr, start, contactId, note);
+      booked = await bookUnderLock(req.db, view, pid, dateStr, start, contactId, note, apptSource);
       if (booked) { providerId = pid; break; }
     }
     if (!booked) {
@@ -1043,4 +1073,4 @@ router.post('/api/contacts/:id/booking-link', jwtOrApiKey, async (req, res) => {
 module.exports = router;
 // Test-only surface (tests/optout.mysql.test.js): the post-create side effects
 // (the confirmation's opted-out skip). Rides along on the router export.
-module.exports._test = { fireSideEffects, successBody };
+module.exports._test = { fireSideEffects, successBody, normalizeSrcTag, composeApptSource, signTs };

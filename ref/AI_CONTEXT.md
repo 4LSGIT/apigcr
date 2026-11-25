@@ -28,6 +28,34 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Booking embed — `?src=<tag>` attribution + auto-resize (11-25; booking
+  landings have no section yet — manual 06-Client-Facing/04 is authoritative):**
+  `GET /b/<slug>?src=<tag>` (a QUERY parameter — `book.html` takes the slug as
+  the last path segment) → the widget sends `src` in the `POST /api/book/:slug`
+  body → `routes/booking.js` `normalizeSrcTag` (trim, lower-case,
+  `^[a-z0-9][a-z0-9_-]{0,29}$`, anything else IGNORED — never a 400) +
+  `composeApptSource`: untagged → exactly `view.source_tag || null`; tagged →
+  `"<view.source_tag || view.slug>:<tag>"`, the BASE cut to fit
+  `appts.appt_source varchar(60)` (relaxed sql_mode truncates silently;
+  `SLUG_RE` allows 100). The tag changes `appt_source` alone — not
+  `successBody`, redirect, branding or `fakeSuccess`. The view hook payload's
+  `source` is now the ROW's `appt_source` when the caller has it, the view's
+  `source_tag` when not (`fireViewHook`, all three callers) — no new field.
+  Known: a reschedule / manage rebook successor carries `appt_view_id` but a
+  NULL `appt_source` (pre-existing); sequence template 20's Clio Grow step
+  posts `{{appts.appt_source|default:YisraCase}}` as `from_source`, so a tagged
+  booking's lead reads `bk-consult:ditchurdebt` there. Two messages from the
+  framed widget to its host, both `{ type:'yc-booking', slug, … }`, `'*'`:
+  `event:'booked', redirect_url` (unchanged) and `event:'resize', height, step`
+  — `height` the CONTENT's height (`.wrap` bottom + scrollY, never
+  `scrollHeight`), `step` `1|2|3|'done'`, posted on boot, every step change,
+  the thank-you and `ResizeObserver` changes (rAF-coalesced, < 2 px skipped);
+  the embed script (`embedListenerScript`) keeps the two guards, clamps
+  300–4000, ignores non-finite / ≤ 0, `scrollIntoView` on a step change (not
+  the first) when the frame's top is above the viewport. Tests:
+  `bookingSrcTag`, `bookingSrcTag.hook`, `bookingSrcTag.mysql`,
+  `bookingRedirect`.
+
 - **Casey v2 S5a — the MCP server, for session keys (11-23):** `POST /mcp`
   (`routes/mcp.js`, Streamable HTTP, STATELESS, `@modelcontextprotocol/sdk`
   1.32.2) authenticates a `ycro_` session key (`lib/auth.readonly`, class

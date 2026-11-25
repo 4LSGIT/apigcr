@@ -431,7 +431,8 @@
     </div>
 
     <h4>Embed code</h4>
-    <div class="hint">Paste where the booking form should appear, and put your thank-you page in <code>THANK_YOU</code>. Left empty, the view's own redirect applies, or the visitor stays on its thank-you message.</div>
+    <div class="hint">Paste where the booking form should appear, and put your thank-you page in <code>THANK_YOU</code>. Left empty, the view's own redirect applies, or the visitor stays on its thank-you message. The box follows the form's height (the <code>height:700px</code> is only the start).</div>
+    <div class="hint">Same view on several websites? Add <code>?src=&lt;tag&gt;</code> to the iframe's <code>src</code> (or to a link) — letters, digits, <code>-</code> and <code>_</code>, up to 30 — and each booking's source reads <code>&lt;source tag or slug&gt;:&lt;tag&gt;</code>. A bad tag is ignored; a tag never changes where the visitor goes.</div>
     <pre class="eh-pre" id="eh-snippet"></pre>
     <button class="btn" id="eh-copy-snippet" type="button">Copy code</button>
 
@@ -528,11 +529,18 @@ function embedSnippet(v) {
 
 // ── Embed help (Fred, 2026-11-19) ───────────────────────────
 // Two ways onto a website, each ending on the site's own thank-you page:
-//   EMBED — public/book.html, framed, only posts { type:'yc-booking',
-//     event:'booked', slug, redirect_url } to its host. The host's script
-//     below decides: its own THANK_YOU (may be relative — it is the host's own
-//     page), else the view's https redirect_url, else the visitor stays on the
-//     thank-you. It trusts only messages from ITS OWN iframe (e.source) while
+//   EMBED — public/book.html, framed, posts two messages to its host, both
+//     { type:'yc-booking', slug, … }, no personal data:
+//       event:'booked', redirect_url — the host's script below decides: its
+//         own THANK_YOU (may be relative — it is the host's own page), else the
+//         view's https redirect_url, else the visitor stays on the thank-you.
+//       event:'resize', height, step — the form's content height in px and
+//         its step (1 | 2 | 3 | 'done'); the script sets the iframe's height
+//         (clamped 300–4000, the snippet's 700px only until the first message)
+//         and, when the step changes and the box has scrolled above the
+//         viewport, scrolls it back into view. An old embed without this
+//         script keeps its fixed box.
+//     It trusts only messages from ITS OWN iframe (e.source) while
 //     that iframe is still on the address it was given (e.origin vs the
 //     iframe's own src — a link inside the box may navigate it to a third-party
 //     page, and contentWindow survives that). Read from the iframe at run time,
@@ -541,6 +549,9 @@ function embedSnippet(v) {
 //   LINK — /b/<slug>; after a booking the page goes to the VIEW's redirect_url
 //     (no page named in the link: that is an open redirect — book.html
 //     afterBooked). A site with its own thank-you page gets its own view.
+//   Either may carry ?src=<tag> (2026-11-25): the booking's appt_source
+//     becomes "<view source_tag or slug>:<tag>" (routes/booking.js). A tag is
+//     attribution only — never a redirect.
 // The closing tag is written <\/script> so it cannot end THIS page's script.
 function embedFrameId(v) { return `yc-booking-${v.slug}`; }
 function embedHelpFrame(v) {
@@ -553,12 +564,24 @@ function embedListenerScript(v) {
     "  // Your thank-you page, e.g. '/thank-you.html'. Leave '' to use the",
     "  // booking view's own redirect, or none (the visitor stays on its thank-you).",
     "  var THANK_YOU = '';",
+    '  var lastStep = null;',
     "  window.addEventListener('message', function (e) {",
     "    var f = document.getElementById('" + embedFrameId(v) + "');",
     '    if (!f || e.source !== f.contentWindow) return;   // only our booking box,',
     '    if (e.origin !== new URL(f.src, location.href).origin) return;   // still on its own page',
     '    var d = e.data;',
-    "    if (!d || d.type !== 'yc-booking' || d.event !== 'booked') return;",
+    "    if (!d || d.type !== 'yc-booking') return;",
+    "    if (d.event === 'resize') {   // the box follows the form's height",
+    '      var h = Number(d.height);',
+    '      if (!isFinite(h) || h <= 0) return;',
+    "      f.style.height = Math.round(Math.min(Math.max(h, 300), 4000)) + 'px';",
+    '      if (d.step !== undefined && d.step !== lastStep) {',
+    "        if (lastStep !== null && f.getBoundingClientRect().top < 0) f.scrollIntoView({ block: 'start' });",
+    '        lastStep = d.step;',
+    '      }',
+    '      return;',
+    '    }',
+    "    if (d.event !== 'booked') return;",
     "    if (THANK_YOU) { window.location.href = THANK_YOU; return; }",
     "    if (typeof d.redirect_url === 'string' && /^https:\\/\\//.test(d.redirect_url)) window.location.href = d.redirect_url;",
     '  });',
@@ -579,10 +602,11 @@ function embedLlmBlurb(v) {
     'EITHER embed it:',
     `1. Where the form should appear, insert exactly: ${embedHelpFrame(v)}`,
     '   Keep the id and src unchanged and do not add a sandbox attribute.',
-    `2. Add a script that listens for window "message" events and ignores any whose event.source is not the contentWindow of the iframe with id "${embedFrameId(v)}", or whose event.origin is not the origin of that iframe's src. When event.data.type === "yc-booking" and event.data.event === "booked", set window.location.href to our thank-you page. Embed this form at most once per page.`,
+    `2. Add a script that listens for window "message" events and ignores any whose event.source is not the contentWindow of the iframe with id "${embedFrameId(v)}", or whose event.origin is not the origin of that iframe's src. Act only when event.data.type === "yc-booking". When event.data.event === "booked", set window.location.href to our thank-you page. When event.data.event === "resize", set the iframe's style.height to event.data.height (a number of px; ignore it unless finite and above 0) clamped between 300 and 4000, and when event.data.step differs from the previous message's step (not on the first message) and the iframe's top is above the viewport, call scrollIntoView({ block: "start" }) on it. Embed this form at most once per page.`,
+    `3. Optional: to tell this website's bookings apart from the same form on other sites, append ?src=<tag> to the iframe's src (letters, digits, - and _, up to 30 characters). The tag only labels the booking; it does not change where the visitor goes.`,
     '',
     'OR link to it:',
-    `   ${embedHelpLink(v)} — after booking, the visitor goes to the thank-you page set for this form in 4LSG (if any); a link cannot choose a different one.`,
+    `   ${embedHelpLink(v)} — after booking, the visitor goes to the thank-you page set for this form in 4LSG (if any); a link cannot choose a different one. The same ?src=<tag> may be appended to the link.`,
   ].join('\n');
 }
 function renderEmbedHelp() {

@@ -649,6 +649,21 @@ showed and the slice left alone:
   validation in `parseTypesParam` / `listCases` to the exact match
   `case_subtype = ''`.
 
+## From the booking-src slice (2026-11-25) — deferred
+
+- **A reschedule / rebook successor carries no `appt_source`.** `rescheduleAppt`
+  copies type, length, platform, provider, `type_key`, the docket anchor and
+  `appt_view_id` onto the successor, and `routes/manage.js`'s rebook copy the
+  same set — neither passes `appt_source`, so the new row is NULL where the
+  original said `calendly` or `bk-consult:ditchurdebt` (live: calendly appt
+  4012 → successor 4014, NULL). Pre-existing, found while adding `?src=` tags.
+  Carrying it is one line in each place, but it also changes what sequence
+  template 20's Clio Grow step posts as `from_source` for a re-enrolled
+  successor (`YisraCase` today, the tag then) — Fred's call. Until then, count
+  bookings per website on the ORIGINAL row (`rescheduled_from_appt_id` links
+  the successor back). The view hook's `source` falls back to the view's
+  `source_tag` for such a row, so hooks are unaffected either way.
+
 ## From the dark-button-state fix (2026-11-01) — deferred
 
 - **Retire style.css's global dark `button` rule.** It flattens every button it doesn't exclude to `--surface`/`--text`, on all 15 pages that load the sheet. The 2026-11-01 fix excluded the controls that lost a selected state; the rule still erases non-state paint: `.ck-btn-alt` (checklist's amber note button) and the e-sign placement editor's `.pe-btn.pe-primary`, whose fill never shows in dark. Demoting it with `:where()` is not a one-line fix: `.pe-*` is a hardcoded light palette, so its buttons would turn bright in dark until the editor is tokenised. Selected states the sweep left alone because they still read: `.cat-form-card.active` and `.pe-tt.on` (box-shadow), `.pe-li.on` (bold), `.pe-bind.on` (its text changes).

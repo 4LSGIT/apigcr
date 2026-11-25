@@ -598,7 +598,13 @@ function _calendarEnvelope(appt, { source = null, actingUserId = 0, extra = null
  * the old booking.js firing).
  */
 function fireViewHook(db, { appt_view_id, event, appt_id, contact_id,
-                            provider, start, rescheduled_from = null }) {
+                            provider, start, rescheduled_from = null,
+                            // The row's appt_source, when the caller has it: a
+                            // booking embed's ?src= tag lands there as
+                            // "<view-tag>:<tag>" (2026-11-25). NULL (a reschedule
+                            // successor carries none) → the view's own source_tag,
+                            // the payload's value before tags existed.
+                            appt_source = null }) {
   const viewId = Number(appt_view_id);
   if (!Number.isInteger(viewId) || viewId <= 0) return;
   (async () => {
@@ -622,7 +628,7 @@ function fireViewHook(db, { appt_view_id, event, appt_id, contact_id,
       provider:   provider ?? null,
       start:      start || null,
       view_slug:  view.slug,
-      source:     view.source_tag || null,
+      source:     (appt_source ?? view.source_tag) || null,
     };
     if (rescheduled_from) payload.rescheduled_from = rescheduled_from;
     await getHookService().executeHook(db, hook.slug, payload);
@@ -1684,6 +1690,7 @@ async function createAppt(db, {
     provider:         Number(appt_with),
     start:            wallClockStr(appt_date),
     rescheduled_from: hook_rescheduled_from,
+    appt_source,
   });
 
   // 7c) Office staff ops alert — client-initiated only (no-op otherwise).
@@ -2226,6 +2233,7 @@ async function cancelAppt(db, {
     contact_id:   appt.appt_client_id,
     provider:     Number(appt.appt_with),
     start:        wallClockStr(appt.appt_date),
+    appt_source:  appt.appt_source,
   });
 
   // 7c) Office staff ops alert — client cancels only. A client reschedule does
@@ -2443,7 +2451,7 @@ async function rescheduleLater(db, {
   if (!appt_id) throw new Error('rescheduleLater requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_case_id, appt_type, type_key, appt_gcal, appt_gcal_user, appt_with, appt_view_id, appt_date, appt_status FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_case_id, appt_type, type_key, appt_gcal, appt_gcal_user, appt_with, appt_view_id, appt_source, appt_date, appt_status FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
@@ -2473,6 +2481,7 @@ async function rescheduleLater(db, {
     contact_id:   appt.appt_client_id,
     provider:     Number(appt.appt_with),
     start:        wallClockStr(appt.appt_date),
+    appt_source:  appt.appt_source,
   });
 
   // 2b) GCal delete (non-blocking)

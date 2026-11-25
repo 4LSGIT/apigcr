@@ -1324,6 +1324,9 @@ tests/automationRead.test.js
 tests/automationReadIngest.mysql.test.js
 tests/bookingRedirect.test.js
 tests/bookingRedirectColumn.mysql.test.js
+tests/bookingSrcTag.hook.test.js
+tests/bookingSrcTag.mysql.test.js
+tests/bookingSrcTag.test.js
 tests/calendarColumns.test.js
 tests/calendarEvents.appt.test.js
 tests/calendarEvents.event.test.js

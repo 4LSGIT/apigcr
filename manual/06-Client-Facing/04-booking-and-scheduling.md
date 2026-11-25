@@ -74,18 +74,47 @@ things to copy:
   form should appear and fill in `THANK_YOU` (a relative address such as
   `/thank-you.html` is fine). The script listens only to its own booking box,
   so it names no domain and works on any website. One embed per view per page.
+  The box **follows the form's height**: the `height:700px` in the code is
+  only the size before the form has loaded; after that the script grows and
+  shrinks the box with each step, so the list of times never scrolls inside a
+  fixed frame, and when a step changes while the top of the box has scrolled
+  off the screen (a long list of times, then the short details form) it
+  scrolls the box back into view. An older embed without this script keeps
+  its fixed box and still books.
 - **Link instead** — the booking page's address; after booking it follows the
   view's **Redirect after booking**.
 - **Instructions for an AI assistant** — both, as plain instructions, for when
   an AI builds the page.
 
+### Telling websites apart: `?src=<tag>`
+
+One view can sit on several websites. To know which site a booking came from,
+add `?src=<tag>` to the box's address (or to a link):
+`https://4lsg.com/b/bk-consult?src=ditchurdebt`. The booking then lands with
+`appts.appt_source` = `<the view's source tag, or its slug>:<tag>` — here
+`bk-consult:ditchurdebt`; a view with the source tag `test-consult` would give
+`test-consult:ditchurdebt`. Without a tag, `appt_source` is the view's source
+tag, or empty, exactly as before.
+
+A tag is letters, digits, `-` and `_`, up to 30 characters, starting with a
+letter or digit; case and surrounding spaces are ignored (`DitchUrDebt` →
+`ditchurdebt`). Anything else is **ignored**: the booking goes through,
+untagged, and nothing is shown to the visitor. The value is cut to the
+column's 60 characters from the view's end, never the tag's. A tag changes
+nothing but that one column: not the thank-you, not the redirect, not the
+branding, and it is never a redirect itself. Automations that read
+`{{appts.appt_source}}` see the tagged value.
+
 ### Counting bookings per page
 
 Every appointment booked through a view records which view it came from
 (`appts.appt_view_id`), whatever the slug is later renamed to. That is the
-column to count by. `appts.appt_source` only holds the view's **source tag**,
-and is empty when the view has none. Neither records which website the visitor
-was on, and page visits are not counted.
+column to count by. `appts.appt_source` holds the view's **source tag** (empty
+when the view has none), with `:<tag>` appended when the embed or link carried
+a `?src=<tag>` — the one way to tell which website the visitor was on. Page
+visits are not counted. A client's own reschedule or rebook through the manage
+link creates a new appointment that carries the view (`appt_view_id`) but not
+`appt_source`: count by view, or by the original booking.
 
 ### Two ways a visitor is identified
 
@@ -237,7 +266,7 @@ identifies contacts on video landing pages. The route path
 | `buffer_min`, `min_notice_min`, `horizon_days`, `granularity_min` | The guard rails |
 | `identity_mode` | `public` or `prefill` |
 | `page_windows` | Optional per-page bookable windows; validated on read, alerting on bad config |
-| `source_tag` | Written to `appts.appt_source` |
+| `source_tag` | Written to `appts.appt_source` — alone, or as `<source_tag or slug>:<tag>` when the booking carried a valid `?src=<tag>` (below) |
 | `hook_id` | Fires a YisraHook on booking |
 | `confirm_sms`, `confirm_email`, `confirm_template` | Confirmations |
 | `title`, `subtitle`, `accent_color`, `logo_url`, `logo_link_url`, `thankyou_html`, `footer_html` | Branding |
@@ -283,6 +312,50 @@ and its visitors stay on the thank-you message until the code is re-copied.
 `book.html` sets `<meta name="referrer" content="strict-origin">`: a prefill
 link's URL carries the contact's bearer token (`?c=`), and a redirect to a
 `4lsg.com` page would otherwise send that full URL as the Referer.
+
+### Attribution: `?src=<tag>`
+
+A query parameter, never a path segment (`book.html` takes the slug as the
+last path segment, and the `/b/` matcher would break on a path tag). The
+widget reads `src` from its own query string and sends it as `src` in the
+`POST /api/book/:slug` body, beside a prefill `c`; an old widget sends none,
+and an old server ignores the unknown field (the POST reads its body fields by
+name). `routes/booking.js` `normalizeSrcTag` trims and lower-cases it and
+requires `^[a-z0-9][a-z0-9_-]{0,29}$`; anything else — including a non-string
+— is ignored and the booking proceeds untagged (attribution never 400s).
+`composeApptSource` then writes `appt_source`: untagged → exactly
+`view.source_tag || null`; tagged → `<base>:<tag>`, `base = view.source_tag ||
+view.slug`, the base cut so the whole value fits `varchar(60)` (`SLUG_RE`
+allows 100 characters and the relaxed `sql_mode` would truncate silently; the
+real-engine twin `tests/bookingSrcTag.mysql.test.js` shows the cut). The tag
+reaches nothing else: not `successBody`, the redirect, the branding or the
+`fakeSuccess` paths. The view hook's payload keeps its `source` field, now the
+row's `appt_source` when the caller has it and the view's `source_tag` when it
+does not (a reschedule successor), so a tagged booking's hook reports the tag.
+Readers of the column: `services/triggerService.js` offers `data.appt_source`
+as a condition path on `appt.created`; sequence template 20's step
+(`sequence_steps` 120 / 200) posts `{{appts.appt_source|default:YisraCase}}`
+to Clio Grow as the lead's `from_source`, so a tagged booking's lead reads
+`bk-consult:ditchurdebt` there; workflow 33 writes `calendly`.
+
+### Auto-resize
+
+Framed (`window.parent !== window`), `book.html` posts
+`{ type: 'yc-booking', event: 'resize', slug, height, step }` to its parent
+(`'*'`, no personal data): on boot, on every step change, on the thank-you
+and whenever the content wrapper changes size (a `ResizeObserver` on `.wrap`,
+coalesced on one animation frame, changes under 2 px skipped, no timers).
+`height` is the CONTENT's height — `.wrap`'s bottom edge plus `scrollY`,
+rounded up — never `documentElement.scrollHeight`, which inside an iframe is
+at least the frame's own height and could never let the frame shrink. `step`
+is `1 | 2 | 3 | 'done'`. The embed script (`embedListenerScript`) applies the
+same two guards as `booked`, then sets the iframe's height to the rounded value
+clamped to 300–4000 px (non-finite or ≤ 0 ignored) and, when `step` differs
+from the previous message's (never on the first) while the frame's top is above
+the viewport, calls `scrollIntoView({ block: 'start' })`. The snippet's
+`height:700px` is the size until the first message. The `booked` message and
+`afterBooked` are unchanged. ditchurdebt.com's `script.js` v1.1 is a host
+implementation of the same contract.
 
 ### API
 

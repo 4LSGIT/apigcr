@@ -11,6 +11,18 @@
  *     and a came-from rule still passes through t.co; Fred, 2026-11-19).
  * Embed help also hands out the plain link and a brief for an AI assistant.
  *
+ * Auto-resize (2026-11-25): framed, the widget also posts { type:'yc-booking',
+ * event:'resize', slug, height, step } — the CONTENT's height (the wrapper's
+ * bottom in document coordinates, never scrollHeight, which inside an iframe
+ * is at least the frame's own height) and the step (1 | 2 | 3 | 'done') — on
+ * boot, on every step change and on content size changes (ResizeObserver,
+ * one animation frame, under 2 px skipped). The embed script sets the
+ * iframe's height (clamped 300–4000, non-finite / ≤ 0 ignored) and, when the
+ * step changes (not on the first message) while the frame's top is above the
+ * viewport, scrolls it back into view. Same two guards as `booked`. Covered
+ * below: the widget's functions in a vm, the host script in a stand-in page
+ * (the same checks ditchurdebt.com's script.js v1.1 passes).
+ *
  * Covered here: the route's validation and storage (routes/api.bookingViews.js,
  * same in-memory harness as unifiedEventsU5.booking), the ONE success shape
  * real and fake share (routes/booking.js successBody), the widget's
@@ -262,6 +274,131 @@ describe('public/book.html — afterBooked', () => {
   });
 });
 
+// ── public/book.html — resize ──────────────────────────────────────────────
+describe('public/book.html — the resize message', () => {
+  const SRC = read('book.html');
+
+  // The widget's resize functions in a stand-in page: `.wrap` sits at
+  // wrapBottom in the viewport, the page scrolled by scrollY; the thank-you
+  // hidden unless said; requestAnimationFrame callbacks collected for the test
+  // to run.
+  function page({ framed = true, wrapBottom = 679.2, scrollY = 0, thankyou = false, step = 1 } = {}) {
+    const posted = [];
+    const frames = [];
+    const win = { parent: { postMessage: (m, o) => posted.push([m, o]) }, scrollY, addEventListener: () => {} };
+    // top level: parent IS the window — and it can receive a message, so a
+    // post the guard should have stopped is recorded, not swallowed
+    if (!framed) { win.parent = win; win.postMessage = (m, o) => posted.push([m, o]); }
+    const wrap = { getBoundingClientRect: () => ({ bottom: wrapBottom }) };
+    const ctx = {
+      window: win, slug: 'consult', step, framed: undefined, lastPostedHeight: -1, resizeRaf: null, resizeForce: false,
+      document: { querySelector: (s) => (s === '.wrap' ? wrap : null) },
+      E: (id) => (id === 'thankyou' ? { classList: { contains: (c) => c === 'hidden' && !ctx.thankyouShown } } : null),
+      thankyouShown: thankyou,
+      requestAnimationFrame: (fn) => { frames.push(fn); return frames.length; },
+      Math,
+    };
+    vm.createContext(ctx);
+    vm.runInContext(['contentHeight', 'currentStep', 'postResize', 'scheduleResize'].map((n) => fnSrc(SRC, n)).join('\n'), ctx);
+    // the module-level detection, lifted verbatim
+    const detect = SRC.match(/var framed = false;\n\s*try \{ framed = window\.parent !== window; \} catch \(e\) \{ framed = true; \}/);
+    expect(detect).not.toBeNull();
+    vm.runInContext(detect[0], ctx);
+    const tick = () => { const fns = frames.splice(0); fns.forEach((fn) => fn()); return fns.length; };
+    return { ctx, posted, frames, tick, wrap, win };
+  }
+
+  test('posts the content height (the wrapper\'s bottom + scrollY, rounded up) and the step, to any origin', () => {
+    const p = page({ wrapBottom: 679.2, scrollY: 0 });
+    p.ctx.postResize(true);
+    expect(p.posted).toEqual([[{ type: 'yc-booking', event: 'resize', slug: 'consult', height: 680, step: 1 }, '*']]);
+    const q = page({ wrapBottom: 400.5, scrollY: 300, step: 2 });
+    q.ctx.postResize(true);
+    expect(q.posted[0][0]).toMatchObject({ height: 701, step: 2 });
+  });
+
+  test('the height is the CONTENT\'s, never documentElement.scrollHeight', () => {
+    expect(fnSrc(SRC, 'contentHeight')).not.toMatch(/scrollHeight|offsetHeight|innerHeight/);
+    expect(fnSrc(SRC, 'contentHeight')).toContain("document.querySelector('.wrap')");
+  });
+
+  test("step is 'done' once the thank-you is on screen", () => {
+    const p = page({ thankyou: true, step: 3 });
+    p.ctx.postResize(true);
+    expect(p.posted[0][0].step).toBe('done');
+  });
+
+  test('not framed: never posts, never schedules a frame', () => {
+    const p = page({ framed: false });
+    expect(p.ctx.framed).toBe(false);
+    p.ctx.postResize(true);
+    p.ctx.scheduleResize(true);
+    expect(p.posted).toEqual([]);
+    expect(p.frames).toEqual([]);
+  });
+
+  test('a change under 2 px is skipped; a forced post (a step change) goes through at the same height', () => {
+    const p = page({ wrapBottom: 680 });
+    p.ctx.postResize(false);
+    expect(p.posted).toHaveLength(1);
+    p.wrap.getBoundingClientRect = () => ({ bottom: 681 });
+    p.ctx.postResize(false);
+    expect(p.posted).toHaveLength(1);           // 1 px: skipped
+    p.wrap.getBoundingClientRect = () => ({ bottom: 682 });
+    p.ctx.postResize(false);
+    expect(p.posted).toHaveLength(2);           // 2 px: posted
+    p.ctx.step = 2;
+    p.ctx.postResize(true);
+    expect(p.posted).toHaveLength(3);           // forced: same height, new step
+    expect(p.posted[2][0]).toMatchObject({ height: 682, step: 2 });
+  });
+
+  test('a zero or missing wrapper height posts nothing', () => {
+    const p = page({ wrapBottom: 0 });
+    p.ctx.postResize(true);
+    expect(p.posted).toEqual([]);
+    const q = page();
+    q.ctx.document.querySelector = () => null;
+    q.ctx.postResize(true);
+    expect(q.posted).toEqual([]);
+  });
+
+  test('scheduleResize coalesces on one animation frame and keeps a force once asked', () => {
+    const p = page({ wrapBottom: 680 });
+    p.ctx.postResize(false);                    // height 680 already posted
+    p.ctx.scheduleResize(false);
+    p.ctx.scheduleResize(true);
+    p.ctx.scheduleResize(false);
+    expect(p.frames).toHaveLength(1);           // one frame for three requests
+    expect(p.tick()).toBe(1);
+    expect(p.posted).toHaveLength(2);           // the force survived the later unforced request
+    p.ctx.scheduleResize(false);
+    p.tick();
+    expect(p.posted).toHaveLength(2);           // unforced at the same height: skipped
+    expect(p.ctx.resizeRaf).toBeNull();
+  });
+
+  test('wired at every point the content changes: boot and each step, the thank-you, the unavailable state, a ResizeObserver on the wrapper', () => {
+    expect(fnSrc(SRC, 'goStep')).toMatch(/scheduleResize\(true\);\n\s*\}$/);
+    expect(fnSrc(SRC, 'showUnavailable')).toContain('scheduleResize(true);');
+    const hb = fnSrc(SRC, 'handleBookResponse');
+    expect(hb.indexOf('scheduleResize(true);')).toBeGreaterThan(hb.indexOf("show('thankyou')"));
+    expect(hb.indexOf('scheduleResize(true);')).toBeLessThan(hb.indexOf('afterBooked(r.body.redirect_url)'));
+    const wire = fnSrc(SRC, 'wireResize');
+    expect(wire).toContain("new ResizeObserver(function () { scheduleResize(false); }).observe(wrap)");
+    expect(wire).toMatch(/^function wireResize\(\) \{\n\s*if \(!framed\) return;/);
+    expect(fnSrc(SRC, 'renderShell')).toMatch(/wireResize\(\);[\s\S]*goStep\(1\);/);
+    // no forever-running timer anywhere in the widget's resize path
+    for (const n of ['contentHeight', 'currentStep', 'postResize', 'scheduleResize', 'wireResize']) {
+      expect([n, /setInterval|setTimeout/.test(fnSrc(SRC, n))]).toEqual([n, false]);
+    }
+  });
+
+  test('the booked message and afterBooked are untouched', () => {
+    expect(fnSrc(SRC, 'afterBooked')).toContain("window.parent.postMessage({ type: 'yc-booking', event: 'booked', slug: slug, redirect_url: viewTarget }, '*');");
+  });
+});
+
 // ── public/bookingviewsmanager.html ────────────────────────────────────────
 describe('bookingviewsmanager.html — Embed help + the redirect field', () => {
   const SRC = read('bookingviewsmanager.html');
@@ -285,7 +422,11 @@ describe('bookingviewsmanager.html — Embed help + the redirect field', () => {
       addEventListener: (t, fn) => { if (t === 'message') listeners.push(fn); },
     };
     const frameSrc = ctx.embedHelpFrame(VIEW).match(/src="([^"]+)"/)[1];
-    const doc = { getElementById: (id) => (id === 'yc-booking-consult' ? { contentWindow: frameWin, src: frameSrc } : null) };
+    // the iframe as the host script sees it: its style, where it sits, and
+    // scrollIntoView recorded (top = its top edge relative to the viewport)
+    const frame = { contentWindow: frameWin, src: frameSrc, style: { height: '700px' }, top: 100, scrolled: [],
+      getBoundingClientRect() { return { top: this.top }; }, scrollIntoView(o) { this.scrolled.push(o); } };
+    const doc = { getElementById: (id) => (id === 'yc-booking-consult' ? frame : null) };
     let code = ctx.embedListenerScript(VIEW).replace(/^<script>/, '').replace(/<\/script>$/, '');
     if (thankYou) {
       const blank = "var THANK_YOU = '';";
@@ -297,7 +438,9 @@ describe('bookingviewsmanager.html — Embed help + the redirect field', () => {
     vm.runInContext(code, c);
     const booked = (over = {}) => ({ source: frameWin, origin: new URL(frameSrc).origin,
       data: { type: 'yc-booking', event: 'booked', slug: 'consult', redirect_url: null, ...over } });
-    return { page, frameWin, booked, fire: (e) => listeners.forEach((fn) => fn(e)), count: () => listeners.length };
+    const resize = (height, step, over = {}) => ({ source: frameWin, origin: new URL(frameSrc).origin,
+      data: { type: 'yc-booking', event: 'resize', slug: 'consult', height, step, ...over } });
+    return { page, frameWin, frame, booked, resize, fire: (e) => listeners.forEach((fn) => fn(e)), count: () => listeners.length };
   }
 
   test('the snippet: an iframe with its id on the landing host, one script, a real closing tag', () => {
@@ -346,6 +489,89 @@ describe('bookingviewsmanager.html — Embed help + the redirect field', () => {
       h.fire(mk(h));
       expect([why, h.page.location.href]).toEqual([why, 'https://vanity.example.net/']);
     }
+  });
+
+  describe('resize: the box follows the form (ditchurdebt.com script.js v1.1 passes the same checks)', () => {
+    test('sets the iframe height to the rounded, clamped value', () => {
+      const h = hostPage();
+      for (const [sent, want] of [[880, '880px'], [1119.6, '1120px'], [412.4, '412px'], [100, '300px'], [299, '300px'], [300, '300px'], [4000, '4000px'], [9000, '4000px'], ['680', '680px']]) {
+        h.fire(h.resize(sent, 1));
+        expect([sent, h.frame.style.height]).toEqual([sent, want]);
+      }
+      expect(h.page.location.href).toBe('https://vanity.example.net/');   // never navigates
+    });
+
+    test('ignores a non-finite or non-positive height, leaving the box as it was', () => {
+      // (a boolean true is Number() 1 → the 300 px floor, as ditchurdebt's host reads it too; not guarded)
+      for (const bad of [0, -1, NaN, Infinity, -Infinity, 'tall', '', null, undefined, {}, [], false]) {
+        const h = hostPage();
+        h.fire(h.resize(bad, 1));
+        expect([bad, h.frame.style.height]).toEqual([bad, '700px']);
+      }
+    });
+
+    test('the same two guards as booked: another window, a navigated box, another type → nothing', () => {
+      for (const [why, mk] of [
+        ['another window', (h) => ({ ...h.resize(900, 1), source: {} })],
+        ['its box, navigated to a third-party page', (h) => ({ ...h.resize(900, 1), origin: 'https://third-party.example.com' })],
+        ['other type', (h) => h.resize(900, 1, { type: 'yc-other' })],
+        ['other event', (h) => h.resize(900, 1, { event: 'grow' })],
+        ['no data', (h) => ({ source: h.frameWin, origin: 'https://4lsg.com', data: null })],
+      ]) {
+        const h = hostPage();
+        h.fire(mk(h));
+        expect([why, h.frame.style.height, h.frame.scrolled]).toEqual([why, '700px', []]);
+      }
+    });
+
+    test('a step change scrolls the box back into view only when its top is above the viewport, and never on the first message', () => {
+      const h = hostPage();
+      h.frame.top = -500;                       // scrolled past, but the first message never scrolls
+      h.fire(h.resize(1200, 2));
+      expect(h.frame.scrolled).toEqual([]);
+      h.fire(h.resize(1210, 2));               // same step: a mere height change
+      expect(h.frame.scrolled).toEqual([]);
+      h.fire(h.resize(700, 3));                // step change, top above the viewport → scroll
+      expect(h.frame.scrolled).toEqual([{ block: 'start' }]);
+      h.frame.top = 40;                         // visible: a step change does not jump the page
+      h.fire(h.resize(500, 'done'));
+      expect(h.frame.scrolled).toEqual([{ block: 'start' }]);
+      h.frame.top = -10;                        // same step again → no scroll
+      h.fire(h.resize(520, 'done'));
+      expect(h.frame.scrolled).toEqual([{ block: 'start' }]);
+      expect(h.frame.style.height).toBe('520px');
+    });
+
+    test('a resize without a step still sizes the box and never scrolls', () => {
+      const h = hostPage();
+      h.frame.top = -500;
+      h.fire(h.resize(900, undefined));
+      h.fire(h.resize(950, undefined));
+      expect(h.frame.style.height).toBe('950px');
+      expect(h.frame.scrolled).toEqual([]);
+    });
+
+    test('resize does not disturb booked: a tagged sequence ends on the thank-you page', () => {
+      const h = hostPage('/thank-you.html');
+      h.fire(h.resize(880, 1));
+      h.fire(h.resize(1300, 2));
+      h.fire(h.booked());
+      expect(h.page.location.href).toBe('/thank-you.html');
+    });
+
+    test('the snippet keeps the 700px start, and the AI brief describes resize and ?src= without naming a domain', () => {
+      expect(ctx.embedHelpFrame(VIEW)).toContain('height:700px');
+      const script = ctx.embedListenerScript(VIEW);
+      expect(script).toContain("d.event === 'resize'");
+      expect(script).toContain('Math.min(Math.max(h, 300), 4000)');
+      expect(script).toContain("scrollIntoView({ block: 'start' })");
+      expect(script).not.toMatch(/4lsg/i);
+      const b = ctx.embedLlmBlurb(VIEW);
+      expect(b).toContain('event.data.event === "resize"');
+      expect(b).toContain('clamped between 300 and 4000');
+      expect(b).toContain('?src=<tag>');
+      expect(b).toContain('does not change where the visitor goes');
+    });
   });
 
   test('two embeds on one page keep their own THANK_YOU (the script is wrapped)', () => {
