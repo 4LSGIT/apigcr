@@ -41,8 +41,9 @@ body. Governing migrations in `ref/migrations/`.*
   `successBody`, redirect, branding or `fakeSuccess`. The view hook payload's
   `source` is now the ROW's `appt_source` when the caller has it, the view's
   `source_tag` when not (`fireViewHook`, all three callers) — no new field.
-  Known: a reschedule / manage rebook successor carries `appt_view_id` but a
-  NULL `appt_source` (pre-existing); sequence template 20's Clio Grow step
+  A reschedule / manage rebook successor carries the original's `appt_source`
+  beside `appt_view_id` (`rescheduleAppt`, `routes/manage.js` rebook; Fred
+  2026-11-25 — successors created before that are NULL); sequence template 20's Clio Grow step
   posts `{{appts.appt_source|default:YisraCase}}` as `from_source`, so a tagged
   booking's lead reads `bk-consult:ditchurdebt` there. Two messages from the
   framed widget to its host, both `{ type:'yc-booking', slug, … }`, `'*'`:

@@ -317,7 +317,7 @@ async function loadApptByToken(db, token) {
   const [[row]] = await db.query(
     `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_status,
             a.appt_type, a.appt_platform, a.appt_length, a.appt_with,
-            a.appt_view_id,
+            a.appt_view_id, a.appt_source,
             DATE_FORMAT(a.appt_date, '%Y-%m-%d %H:%i') AS appt_start,
             c.contact_fname,
             u.user_real_name, u.user_name,
@@ -795,6 +795,9 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
           appt_with:     Number(appt.appt_with),
           note:          '[Rebooked by client via manage link]',
           appt_view_id:  appt.appt_view_id,
+          // The booking channel moves with the booking, as rescheduleAppt
+          // does for the Scheduled branch (Fred, 2026-11-25).
+          appt_source:   appt.appt_source,
           hook_event:    'rebooked',
           hook_rescheduled_from: appt.appt_id,
           actingUserId:  0,

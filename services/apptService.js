@@ -2380,6 +2380,11 @@ async function rescheduleAppt(db, {
     // Slice 9b: branding/hook linkage survives the move; the successor
     // fires ONE 'rescheduled' event referencing the old appt.
     appt_view_id:          oldAppt.appt_view_id,
+    // The booking channel moves with the booking (Fred, 2026-11-25): a
+    // successor of a `calendly` or `bk-consult:ditchurdebt` row counts for
+    // the same channel, and sequence template 20's Clio Grow step reads it
+    // as from_source. Successors created before this carry NULL.
+    appt_source:           oldAppt.appt_source,
     hook_event:            'rescheduled',
     hook_rescheduled_from: appt_id
   });

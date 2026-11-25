@@ -113,8 +113,10 @@ column to count by. `appts.appt_source` holds the view's **source tag** (empty
 when the view has none), with `:<tag>` appended when the embed or link carried
 a `?src=<tag>` — the one way to tell which website the visitor was on. Page
 visits are not counted. A client's own reschedule or rebook through the manage
-link creates a new appointment that carries the view (`appt_view_id`) but not
-`appt_source`: count by view, or by the original booking.
+link creates a new appointment that carries both the view (`appt_view_id`) and
+`appt_source`, so the count follows the booking (successors created before
+2026-11-25 have no `appt_source`; `rescheduled_from_appt_id` links them back to
+the original row).
 
 ### Two ways a visitor is identified
 
@@ -331,7 +333,9 @@ real-engine twin `tests/bookingSrcTag.mysql.test.js` shows the cut). The tag
 reaches nothing else: not `successBody`, the redirect, the branding or the
 `fakeSuccess` paths. The view hook's payload keeps its `source` field, now the
 row's `appt_source` when the caller has it and the view's `source_tag` when it
-does not (a reschedule successor), so a tagged booking's hook reports the tag.
+does not (a successor created before 2026-11-25, or a row whose channel was
+cleared by staff), so a tagged booking's hook reports the tag. A reschedule or
+rebook successor carries the original's `appt_source`.
 Readers of the column: `services/triggerService.js` offers `data.appt_source`
 as a condition path on `appt.created`; sequence template 20's step
 (`sequence_steps` 120 / 200) posts `{{appts.appt_source|default:YisraCase}}`

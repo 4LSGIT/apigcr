@@ -1310,6 +1310,7 @@ tests/apptService.followUpTask.test.js
 tests/apptService.lineage.test.js
 tests/apptService.providerCancelNotice.test.js
 tests/apptService.typeKey.test.js
+tests/apptSourceCarry.test.js
 tests/apptStatusGuards.test.js
 tests/apptTypeKey.patch.test.js
 tests/apptsSearch.picker.test.js

@@ -5,8 +5,10 @@
  * { event, appt_id, contact_id, provider, start, view_slug, source }. `source`
  * used to be the VIEW's source_tag; it is now the ROW's appt_source when the
  * caller has it — a ?src= tagged booking reports "<view-tag>:<tag>" — and the
- * view's source_tag when the row carries none (a reschedule successor: NULL
- * appt_source, exactly the value the payload had before tags). No new field.
+ * view's source_tag when the row carries none (a successor created before
+ * 2026-11-25, a row staff cleared: exactly the value the payload had before
+ * tags). No new field. Since 2026-11-25 a reschedule / rebook successor
+ * carries the original's appt_source (tests/apptSourceCarry.test.js).
  *
  * Driven through the real createAppt / rescheduleLater over a SQL-matching
  * db stub (the apptService.lineage idiom); executeHook is the only mock that
@@ -116,7 +118,7 @@ describe('createAppt → the view hook\'s `source`', () => {
     expect(hookPayloads()[0].payload.source).toBe('test-consult');
   });
 
-  test('a row without a value falls back to the VIEW\'s tag (a reschedule successor carries none): today\'s payload', async () => {
+  test('a row without a value falls back to the VIEW\'s tag (a pre-2026-11-25 successor carries none): today\'s payload', async () => {
     const db = makeDb();
     await apptService.createAppt(db, { ...BASE, appt_view_id: 1, hook_event: 'rescheduled', hook_rescheduled_from: 501 });
     await flush();
